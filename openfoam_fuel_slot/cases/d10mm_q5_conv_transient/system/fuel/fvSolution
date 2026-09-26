@@ -1,0 +1,26 @@
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    location    "system/fuel";
+    object      fvSolution;
+}
+
+solvers
+{
+    "rho.*" { solver PCG; preconditioner DIC; tolerance 1e-8; relTol 0; }
+    p_rgh { solver GAMG; smoother GaussSeidel; tolerance 1e-7; relTol 0.01; }
+    p_rghFinal { $p_rgh; relTol 0; }
+    "(U|h)" { solver PBiCGStab; preconditioner DILU; tolerance 1e-9; relTol 0.05; }
+    "(U|h)Final" { $U; relTol 0; }
+}
+PIMPLE
+{
+    momentumPredictor yes;
+    nCorrectors     2;
+    nNonOrthogonalCorrectors 0;
+    pRefCell        0;
+    pRefValue       1e5;
+}
+relaxationFactors { equations { ".*" 1; } }

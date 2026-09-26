@@ -1,0 +1,12 @@
+# OpenFOAM run output (regenerate with cases/<name>/Allrun)
+processor*/
+cases/*/[0-9]*
+cases/*/constant/polyMesh/
+cases/*/constant/fuel/polyMesh/
+cases/*/constant/graphite/polyMesh/
+cases/*/log.*
+cases/*/done
+cases/*/postProcessing/
+*.foam
+__pycache__/
+cases/*/constant/cellToRegion

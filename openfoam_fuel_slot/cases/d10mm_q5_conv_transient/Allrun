@@ -1,0 +1,16 @@
+#!/bin/bash
+# Transient (chtMultiRegionFoam) restart from the converged-as-far-as-possible steady solution of
+# ../d10mm_q5_conv, to test whether the flow in the 1 cm slot at q''' = 5 MW/m3 is steady.
+cd "${0%/*}" || exit 1
+[ -n "$WM_PROJECT_DIR" ] || . /usr/share/openfoam/etc/bashrc > /dev/null 2>&1
+set -e
+SRC=../d10mm_q5_conv
+T=$(ls $SRC | grep -E '^[0-9]+$' | sort -n | tail -1)
+for r in fuel graphite; do
+    rm -rf constant/$r/polyMesh; cp -r $SRC/constant/$r/polyMesh constant/$r/
+    mkdir -p 0/$r; cp $SRC/$T/$r/* 0/$r/
+done
+rm -f 0/fuel/phi   # recompute fluxes
+[ -d constant/fuel/polyMesh/sets ] || topoSet -region fuel -time 0 > log.topoSet.fuel 2>&1
+decomposePar -allRegions -force > log.decomposePar 2>&1
+mpirun -np 4 chtMultiRegionFoam -parallel > log.chtMultiRegionFoam 2>&1

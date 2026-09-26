@@ -1,0 +1,34 @@
+# Continuation runs actually used after run_matrix.py (args: case newEndTime [U_relax h_relax p_rgh_relax])
+# 1) conduction cases: h relaxation raised to 1, continued to 2000 iterations (new cases are generated that way)
+cases/d05mm_q10_cond 2000
+cases/d05mm_q10_cond_Tc600 2000
+cases/d05mm_q1_cond 2000
+cases/d05mm_q20_cond 2000
+cases/d05mm_q20_cond_Tc600 2000
+cases/d05mm_q30_cond 2000
+cases/d05mm_q3_cond 2000
+cases/d05mm_q40_cond 2000
+cases/d10mm_q10_cond 2000
+cases/d10mm_q1_cond 2000
+cases/d10mm_q2_cond 2000
+cases/d10mm_q3_cond 2000
+cases/d10mm_q3_cond_Tc600 2000
+# 2) first continuation
+cases/d05mm_q30_conv 7000 0.15 0.3 0.5
+cases/d05mm_q40_conv 7000 0.15 0.3 0.5
+cases/d05mm_q20_conv_meshCoarse 7000 0.15 0.3 0.5
+cases/d10mm_q10_conv 7000 0.15 0.3 0.5
+cases/d05mm_q10_conv_h300 7000
+cases/d05mm_q10_conv_h1000 7000
+# 3) second continuation
+cases/d10mm_q5_conv 11000 0.15 0.3 0.5
+cases/d10mm_q5_conv_Tc600 11000 0.15 0.3 0.5
+cases/d10mm_q3_conv 11000 0.15 0.3 0.5
+cases/d10mm_q3_conv_Tc600 11000 0.15 0.3 0.5
+cases/d10mm_q3_conv_h1000 11000 0.15 0.3 0.5
+cases/d10mm_q3_conv_h300 11000 0.15 0.3 0.5
+cases/d10mm_q2_conv 11000 0.15 0.3 0.5
+cases/d10mm_q10_conv 13000 0.1 0.2 0.3
+cases/d05mm_q20_conv_meshCoarse 13000 0.1 0.2 0.3
+cases/d05mm_q10_conv_h300 12000
+# usage: grep -v '^#' scripts/continue_lists.txt | xargs -P 7 -L 1 scripts/continue_case.sh

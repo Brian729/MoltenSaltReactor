@@ -1,0 +1,11 @@
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    location    "system/graphite";
+    object      decomposeParDict;
+}
+numberOfSubdomains 1;
+method simple;
+coeffs { n (1 1 1); }

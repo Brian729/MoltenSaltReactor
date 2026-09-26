@@ -1,0 +1,37 @@
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    location    "constant/fuel";
+    object      thermophysicalProperties;
+}
+
+// Fuel salt 7LiF-BeF2-ZrF4-UF4 61.83-29.17-5.0-4.0 mol%. rho(T) linear (thermal expansion drives buoyancy,
+// full variable-density formulation, no Boussinesq approximation needed); mu(T) polynomial fit of MSRE correlation.
+thermoType
+{
+    type            heRhoThermo;
+    mixture         pureMixture;
+    transport       polynomial;
+    thermo          hPolynomial;
+    equationOfState icoPolynomial;
+    specie          specie;
+    energy          sensibleEnthalpy;
+}
+mixture
+{
+    specie          { molWeight 40.0; }
+    equationOfState { rhoCoeffs<8> (3140.000957 -0.5932765258 0 0 0 0 0 0); }
+    thermodynamics
+    {
+        Hf              0;
+        Sf              0;
+        CpCoeffs<8>     (1970.0 0 0 0 0 0 0 0);
+    }
+    transport
+    {
+        muCoeffs<8>     (1.21431605 -0.00516254204 8.96105594e-06 -7.87497715e-09 3.48874372e-12 -6.21636273e-16 0 0);
+        kappaCoeffs<8>  (1.05 0 0 0 0 0 0 0);
+    }
+}

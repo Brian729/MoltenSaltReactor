@@ -1,0 +1,20 @@
+#!/bin/bash
+# 2D fuel-slot conjugate heat transfer case: mesh, split regions, set BCs/sources, run chtMultiRegionSimpleFoam.
+cd "${0%/*}" || exit 1
+[ -n "$WM_PROJECT_DIR" ] || . /usr/share/openfoam/etc/bashrc > /dev/null 2>&1
+SCRIPTS=../../scripts
+set -e
+blockMesh > log.blockMesh 2>&1
+splitMeshRegions -cellZonesOnly -overwrite > log.splitMeshRegions 2>&1
+topoSet -region fuel > log.topoSet.fuel 2>&1
+mkdir -p 0/fuel 0/graphite
+python3 $SCRIPTS/set_fields.py .          # writes 0/fuel/* and 0/graphite/* (coolant T(z) BC, init T)
+if grep -q "frozenFlow      no" system/fuel/fvSolution; then
+    # stage 1: conduction-only initial field (frozen flow, U = 0), then stage 2: buoyant flow
+    sed -i 's/frozenFlow      no/frozenFlow      yes/' system/fuel/fvSolution
+    sed -i 's/^endTime .*/endTime 1000;/' system/controlDict
+    chtMultiRegionSimpleFoam > log.chtMultiRegionSimpleFoam.stage1 2>&1
+    sed -i 's/frozenFlow      yes/frozenFlow      no/' system/fuel/fvSolution
+    sed -i 's/^endTime .*/endTime 4000;/' system/controlDict
+fi
+chtMultiRegionSimpleFoam > log.chtMultiRegionSimpleFoam 2>&1

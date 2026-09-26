@@ -1,0 +1,3 @@
+#!/bin/bash
+cd "${0%/*}" || exit 1
+rm -rf 0 [1-9]* constant/polyMesh constant/fuel/polyMesh constant/graphite/polyMesh postProcessing log.* processor*

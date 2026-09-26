@@ -1,0 +1,5 @@
+d_f_cm,coolant,q_avg_allowed_conv_MW_m3,q_avg_allowed_cond_MW_m3,q_conv_range_lo,q_conv_range_hi,note_conv,note_cond,power_factor_conv_over_cond,P_core_conv_MW,P_core_cond_MW
+0.5,linear,19.33,19.46,19.33,19.33,interpolated; uses non-converged steady points,interpolated,0.9934,4.925,4.957
+0.5,uniform,21.2,21.05,nan,nan,linear extrapolation,linear extrapolation,1.007,5.401,5.364
+1,linear,11.32,5.191,nan,nan,linear extrapolation; uses non-converged steady points,interpolated,2.181,2.885,1.323
+1,uniform,6.415,5.608,nan,nan,linear extrapolation; uses non-converged steady points,linear extrapolation,1.144,1.635,1.429
