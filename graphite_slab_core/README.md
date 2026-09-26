@@ -14,6 +14,15 @@ Baseline (default geometry, R = 70 cm, bare, ENDF/B-VIII.0, 10k particles x 100 
 - k-eff = 0.84793 +/- 0.00117, with leakage fraction 0.442.
 - Unit-cell k-inf = 1.58746 +/- 0.00111.
 
+Slot depth scans (notebook section 9, `dev/depth_scan.py common|coolant`; flat 0.5, web 1.5, wall 0.5 cm; same statistics as the baseline):
+- **Common depth** (fuel and coolant slots together, d = 0.6 to 1.2 cm):
+  - Shallower slots raise unit-cell k-inf (1.572 to 1.618).
+  - They lower bare-core k-eff (0.851 to 0.823), because leakage rises (0.436 to 0.471).
+  - Results: `results/depth_scan.csv`, plot: `figures/depth_scan.png`.
+- **Coolant-only depth** (fuel depth 1.0 cm, coolant depth d_c = 0.6 to 1.2 cm, optional `coolant_depth=` parameter):
+  - Shallower coolant slots raise both k-inf and k-eff (k-eff 0.890 at d_c = 0.6 vs 0.848 at 1.0).
+  - Results: `results/coolant_depth_scan.csv`, plot: `figures/coolant_depth_scan.png`.
+
 Requires OpenMC (tested with 0.16.0 from conda-forge) and `OPENMC_CROSS_SECTIONS` pointing to an ENDF/B-VIII.0 HDF5 library that includes `c_Graphite`.
 
 Folders:

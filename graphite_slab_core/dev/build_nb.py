@@ -72,6 +72,7 @@ therefore **one shared wall** between each fuel row and the adjacent coolant row
 * Fuel slot: profile in the **x–y** plane, extruded along **z**. Coolant slot: the same profile in the **x–z** plane, extruded along **y**.
 * **All slots identical** (fuel = coolant width, depth, profile) and **one web thickness everywhere**: `web_thickness` is the land
   between neighbouring slots of a row (the only web in the plate stack; rows are separated by the shared wall).
+* Optional `coolant_depth=` (default `None` = same as `slot_depth`) gives the coolant slots their own depth (width `2 d_c + flat`); used only in the §9 coolant-only depth scan.
 * Every sample is feasible by construction (`d > 0`, `flat_width ≥ 0`, `web > 0`, `wall > 0`).
 * Legacy options (not default): `round_location="side"` (one side rounded, w = d + flat), `"bottom"` (U-groove, explicit
   `slot_width ≤ 2d`), `"none"` (square, w = flat); `stacking="interleaved"` (old multi-row slabs with webs between rows).
@@ -426,6 +427,90 @@ t = ax.table(cellText=tbl.values, colLabels=list(tbl.columns), rowLabels=[str(i)
 t.auto_set_font_size(False); t.set_fontsize(8); t.scale(1, 1.3)
 ax.set_title("LHS results summary (lengths in cm)", fontsize=10)
 fig.tight_layout(); fig.savefig(os.path.join(WORK_DIR, "lhs_summary_table.png"), dpi=150); plt.show()
+''')
+
+md(r'''## 9. Depth scans — does a shallower slot improve k-eff?
+Two one-at-a-time scans, holding `flat_width = 0.5`, `web_thickness = 1.5`, `wall_thickness = 0.5` cm, with the same model as the
+baseline (`both_sides` profile, plate stacking, bare cylinder R = 70 cm, H = 2R, default enrichment, 10 000 particles × 100 batches, 40 inactive):
+
+* **Common depth scan:** fuel and coolant slot depth together, `d = 0.6, 0.8, 1.0, 1.2` cm (`w = 2d + flat`; the pitch shrinks with `d`).
+* **Coolant-only depth scan:** fuel depth fixed at 1.0 cm, `coolant_depth = 0.6 … 1.2` cm (coolant width `w_c = 2 d_c + flat`).
+  With `coolant_depth ≠ slot_depth` the unit cell stays consistent: the coolant layer is `d_c` thick
+  (`P_x = d + d_c + 2·wall`), fuel slots repeat along y with `P_y = w + web`, coolant slots along z with `P_z = w_c + web`
+  (one web thickness everywhere). `coolant_depth=None` (default) = identical slots.
+
+The scans were run with `dev/depth_scan.py common|coolant`; this cell **loads** `results/depth_scan.csv` and
+`results/coolant_depth_scan.csv` (set `RUN_DEPTH_SCAN = True` to recompute them here, ~10 min each).
+Core fuel volume = fuel volume fraction × cylinder volume (2155 L); fuel mass uses the MSRE fuel-salt density at 922 K.''')
+code(r'''
+RUN_DEPTH_SCAN = False
+SCAN_DEPTHS = [0.6, 0.8, 1.0, 1.2]
+DS_FIXED = dict(flat_width=0.5, web_thickness=1.5, wall_thickness=0.5)
+SCANS = {  # name: (csv, png, x column, geometry for depth x)
+    "common":  ("depth_scan.csv", "depth_scan.png", "slot_depth", lambda x: dict(slot_depth=x, **DS_FIXED)),
+    "coolant": ("coolant_depth_scan.csv", "coolant_depth_scan.png", "coolant_depth",
+                lambda x: dict(slot_depth=1.0, coolant_depth=x, **DS_FIXED)),
+}
+
+def _run_k(m, cwd):
+    sp_path = m.run(cwd=cwd, output=False, threads=THREADS)
+    with openmc.StatePoint(sp_path) as sp:
+        gt = sp.global_tallies
+        names = [n.decode() if isinstance(n, bytes) else str(n) for n in gt["name"]]
+        return sp.keff.nominal_value, sp.keff.std_dev, float(gt["mean"][names.index("leakage")])
+
+def run_depth_scan(name):
+    csv, _, xcol, geo_of = SCANS[name]
+    rho_f = make_materials(temperature=TEMPERATURE_K, enrichment=ENRICHMENT)["fuel"].density
+    rows = []
+    for x_ in SCAN_DEPTHS:
+        geo = geo_of(x_)
+        am = analytic_metrics(core_radius=CORE_RADIUS, **geo, **GEOM_OPTS)
+        base = os.path.join(WORK_DIR, "depth_scan" if name == "common" else "coolant_depth_scan", f"d{x_:.1f}")
+        ki = _run_k(build_model(**geo, **GEOM_OPTS, mode="unit_cell", enrichment=ENRICHMENT, **RUN_OPTS), base + "_kinf")
+        ke = _run_k(build_model(**geo, **GEOM_OPTS, mode="cylinder", core_radius=CORE_RADIUS, enrichment=ENRICHMENT, **RUN_OPTS), base + "_cyl")
+        rows.append(dict(slot_depth=geo["slot_depth"], coolant_depth=am["coolant_depth"], **DS_FIXED, slot_width=am["slot_width"],
+                         coolant_slot_width=am["coolant_slot_width"], kinf=ki[0], kinf_std=ki[1], keff=ke[0], keff_std=ke[1],
+                         leakage_fraction=ke[2], fuel_vf=am["fuel_vf"], coolant_vf=am["coolant_vf"], graphite_vf=am["graphite_vf"],
+                         graphite_to_fuel=am["graphite_to_fuel"], core_fuel_volume_l=am["core_fuel_volume_l"],
+                         core_fuel_mass_kg=am["core_fuel_volume_l"] * rho_f))
+    os.makedirs(os.path.join(WORK_DIR, "results"), exist_ok=True)
+    pd.DataFrame(rows).to_csv(os.path.join(WORK_DIR, "results", csv), index=False)
+
+def plot_depth_scan(ds, xcol, title, png):
+    """phone-friendly: three stacked panels, large fonts"""
+    with plt.rc_context({"font.size": 13}):
+        fig, (a1, a2, a3) = plt.subplots(3, 1, figsize=(6, 10.5), sharex=True, gridspec_kw=dict(height_ratios=[1, 1, 0.8]))
+        a1.errorbar(ds[xcol], ds.kinf, yerr=ds.kinf_std, fmt="o-", color="tab:red", capsize=4, lw=2, ms=7)
+        a1.set_ylabel("unit-cell k-inf"); a1.grid(alpha=0.3); a1.set_title(title, fontsize=12)
+        a2.errorbar(ds[xcol], ds.keff, yerr=ds.keff_std, fmt="s-", color="tab:blue", capsize=4, lw=2, ms=7)
+        a2.set_ylabel(f"bare-cylinder k-eff\n(R = {CORE_RADIUS:.0f} cm, H = 2R)"); a2.grid(alpha=0.3)
+        for x_, k_, L_ in zip(ds[xcol], ds.keff, ds.leakage_fraction):
+            a2.annotate(f"leak {L_:.3f}", (x_, k_), xytext=(0, 9), textcoords="offset points", ha="center", fontsize=10)
+        a2.margins(y=0.25)
+        a3.plot(ds[xcol], ds.graphite_to_fuel, "D-", color="0.3", lw=2, ms=7)
+        a3.set_ylabel("C / fuel ratio"); a3.grid(alpha=0.3)
+        b_ = a3.twinx()
+        b_.plot(ds[xcol], ds.fuel_vf, "^--", color="tab:orange", lw=1.5, ms=6, label="fuel")
+        b_.plot(ds[xcol], ds.coolant_vf, "v:", color="tab:cyan", lw=1.5, ms=6, label="coolant")
+        b_.set_ylabel("salt vol. fraction"); b_.legend(fontsize=9, loc="best")
+        a3.set_xlabel(("slot depth d" if xcol == "slot_depth" else "coolant slot depth d_c") + " [cm]"); a3.set_xticks(ds[xcol])
+        fig.tight_layout(); os.makedirs(os.path.dirname(png), exist_ok=True); fig.savefig(png, dpi=150); plt.show()
+
+TITLES = {"common": "Slot depth scan (fuel = coolant slots)\nflat 0.5, web 1.5, wall 0.5 cm; w = 2d + flat",
+          "coolant": "Coolant-only depth scan (fuel depth 1.0 cm)\nflat 0.5, web 1.5, wall 0.5 cm; w_c = 2d_c + flat"}
+SHOW = ["slot_depth", "coolant_depth", "slot_width", "coolant_slot_width", "kinf", "kinf_std", "keff", "keff_std", "leakage_fraction",
+        "fuel_vf", "coolant_vf", "graphite_vf", "graphite_to_fuel", "core_fuel_volume_l", "core_fuel_mass_kg"]
+depth_scans = {}
+for name, (csv, png, xcol, _) in SCANS.items():
+    path = os.path.join(WORK_DIR, "results", csv)
+    if RUN_DEPTH_SCAN and HAVE_XS:
+        run_depth_scan(name)
+    if not os.path.exists(path):
+        print(f"[{name}] no results at {path} - run dev/depth_scan.py {name} or set RUN_DEPTH_SCAN = True"); continue
+    ds = depth_scans[name] = pd.read_csv(path)
+    print(f"\n{name} depth scan:"); display(ds[[c for c in SHOW if c in ds]].round(5))
+    plot_depth_scan(ds, xcol, TITLES[name], os.path.join(WORK_DIR, "figures", png))
 ''')
 
 md('''## Notes / next steps

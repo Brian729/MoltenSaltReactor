@@ -248,7 +248,7 @@ STACKINGS = ("plates", "interleaved")
 
 def resolve_params(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thickness=0.5, *,
                    round_location="both_sides", slot_width=None, stacking="plates", n_slot_pairs=2,
-                   round_side="+", **_ignored):
+                   round_side="+", coolant_depth=None, **_ignored):
     """Validate the parameters and return the unit-cell layout.
 
     Primary parameters: slot_depth d, flat_width (flat bottom between the two radii), web_thickness,
@@ -264,11 +264,18 @@ def resolve_params(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thick
     stacking="interleaved" (legacy): a slab holds n_slot_pairs x (F, web, C) rows separated by webs,
         slabs separated by one wall: F web C [web F web C]*(n-1) wall.
 
-    `layers` entries are (kind, thickness), kind in {'F','C','web','wall'}; F/C layers are d thick.
+    coolant_depth (optional, default None = slot_depth): separate depth d_c for the coolant slots, same profile
+        rule and same flat_width -> coolant width w_c = 2 d_c + flat.  The unit cell stays consistent because
+        fuel slots repeat along y (P_y = w + web) and coolant slots along z (P_z = w_c + web), and the
+        coolant layer is d_c thick (P_x = d + d_c + 2 wall for plates).  With coolant_depth=None everything
+        is identical to the uniform-slot design.
+
+    `layers` entries are (kind, thickness), kind in {'F','C','web','wall'}; F layers are d, C layers d_c thick.
     """
     d, t_web, t_wall = map(float, (slot_depth, web_thickness, wall_thickness))
+    dc = d if coolant_depth is None else float(coolant_depth)
     errs = []
-    for k, v in dict(slot_depth=d, web_thickness=t_web, wall_thickness=t_wall).items():
+    for k, v in dict(slot_depth=d, coolant_depth=dc, web_thickness=t_web, wall_thickness=t_wall).items():
         if not (v > 0 and math.isfinite(v)):
             errs.append(f"{k} must be a positive finite number (got {v})")
     if round_location not in PROFILES:
@@ -279,10 +286,10 @@ def resolve_params(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thick
         errs.append("n_slot_pairs must be an integer >= 1")
     if round_side not in ("+", "-"):
         errs.append("round_side must be '+' or '-'")
-    w = None
+    w = wc = None
     if not errs:
         if slot_width is not None:
-            w = float(slot_width)
+            w = wc = float(slot_width)          # legacy: explicit width used for both slot types
         elif round_location == "bottom":
             errs.append("round_location='bottom' needs an explicit slot_width")
         else:
@@ -290,26 +297,28 @@ def resolve_params(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thick
             if not (f >= 0 and math.isfinite(f)):
                 errs.append(f"flat_width must be >= 0 (got {flat_width})")
             else:
-                w = slot_width_from(d, f, round_location)
+                w, wc = slot_width_from(d, f, round_location), slot_width_from(dc, f, round_location)
     if not errs:
-        ok, msg = profile_feasible(w, d, round_location)
-        if not ok:
-            errs.append(msg)
+        for ww, dd, lab in ((w, d, "fuel"), (wc, dc, "coolant")):
+            ok, msg = profile_feasible(ww, dd, round_location)
+            if not ok:
+                errs.append(f"{lab} slot: {msg}")
     if errs:
         raise ValueError("; ".join(errs))
     flat = {"both_sides": w - 2 * d, "side": w - d, "none": w, "bottom": 0.0}[round_location]
 
     if stacking == "plates":
-        layers = [("F", d), ("wall", t_wall), ("C", d), ("wall", t_wall)]
+        layers = [("F", d), ("wall", t_wall), ("C", dc), ("wall", t_wall)]
     else:
-        layers = [("F", d), ("web", t_web), ("C", d)]
+        layers = [("F", d), ("web", t_web), ("C", dc)]
         for _ in range(int(n_slot_pairs) - 1):
-            layers += [("web", t_web), ("F", d), ("web", t_web), ("C", d)]
+            layers += [("web", t_web), ("F", d), ("web", t_web), ("C", dc)]
         layers += [("wall", t_wall)]
-    return dict(slot_depth=d, flat_width=flat, slot_width=w, web_thickness=t_web, wall_thickness=t_wall,
+    return dict(slot_depth=d, flat_width=flat, slot_width=w, coolant_depth=dc, coolant_slot_width=wc,
+                web_thickness=t_web, wall_thickness=t_wall,
                 round_location=round_location, round_side=round_side, stacking=stacking,
                 n_slot_pairs=int(n_slot_pairs) if stacking == "interleaved" else None, layers=layers,
-                pitch_x=sum(t for _, t in layers), pitch_y=w + t_web, pitch_z=w + t_web)
+                pitch_x=sum(t for _, t in layers), pitch_y=w + t_web, pitch_z=wc + t_web)
 
 def is_feasible(**kw):
     try:
@@ -333,18 +342,22 @@ def analytic_metrics(core_radius=None, **kw):
     If core_radius is given, also the (approximate: fraction x volume) salt volumes in the H=2R cylinder."""
     p = resolve_params(**kw)
     w, d, loc = p["slot_width"], p["slot_depth"], p["round_location"]
+    wc, dc = p["coolant_slot_width"], p["coolant_depth"]
     A, Pm = profile_area(w, d, loc), profile_perimeter(w, d, loc)
+    Ac, Pmc = profile_area(wc, dc, loc), profile_perimeter(wc, dc, loc)
     nF = sum(k == "F" for k, _ in p["layers"]); nC = sum(k == "C" for k, _ in p["layers"])
     Px, Py, Pz = p["pitch_x"], p["pitch_y"], p["pitch_z"]
     V = Px * Py * Pz
     Vf = nF * A * Pz            # fuel slots run along z
-    Vc = nC * A * Py            # coolant slots run along y
+    Vc = nC * Ac * Py           # coolant slots run along y
     Vg = V - Vf - Vc
-    return dict(slot_width=w, pitch_x=Px, pitch_y=Py, pitch_z=Pz, slot_area=A, slot_perimeter=Pm,
+    return dict(slot_width=w, coolant_depth=dc, coolant_slot_width=wc, pitch_x=Px, pitch_y=Py, pitch_z=Pz,
+                slot_area=A, slot_perimeter=Pm, coolant_slot_area=Ac,
                 fuel_vf=Vf / V, coolant_vf=Vc / V, graphite_vf=Vg / V,
                 graphite_to_fuel=Vg / Vf, coolant_to_fuel=Vc / Vf,
                 fuel_hydraulic_diam=4 * A / Pm,
-                fuel_wetted_area_per_fuel_vol=Pm / A,      # cm^2 / cm^3 (same for coolant)
+                fuel_wetted_area_per_fuel_vol=Pm / A,      # cm^2 / cm^3
+                coolant_hydraulic_diam=4 * Ac / Pmc,
                 plate_thickness=(d + p["wall_thickness"]) if p["stacking"] == "plates" else Px - p["wall_thickness"],
                 **({} if core_radius is None else dict(
                     core_volume_l=2 * math.pi * core_radius**3 / 1000.0,
@@ -369,7 +382,7 @@ def build_unit_universe(p, mats):
             c = openmc.Cell(name=f"fuel slot (layer {i})", fill=mats["fuel"], region=r)
         elif kind == "C":
             # horizontal coolant slot: runs along y, width along z, mouth at the layer's -x face
-            r = milled_slot_region("y", "x", "z", mouth=x, u0=-Pz / 2 + web / 2, w=w, d=d,
+            r = milled_slot_region("y", "x", "z", mouth=x, u0=-Pz / 2 + web / 2, w=p["coolant_slot_width"], d=p["coolant_depth"],
                                    round_location=loc, round_side=p["round_side"])
             c = openmc.Cell(name=f"coolant slot (layer {i})", fill=mats["coolant"], region=r)
         else:
@@ -390,13 +403,14 @@ def _box(Lx, Ly, Lz, bc="transmission", center=(0, 0, 0)):
 
 def build_model(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thickness=0.5, *,
                 round_location="both_sides", slot_width=None, stacking="plates", n_slot_pairs=2, round_side="+",
-                mode="cylinder", core_radius=70.0, reflector_thickness=0.0,
+                coolant_depth=None, mode="cylinder", core_radius=70.0, reflector_thickness=0.0,
                 enrichment=None, fuel=None, coolant=None, graphite=None, temperature=922.0,
                 particles=10000, batches=100, inactive=40, seed=1):
     """Return an openmc.Model of the slotted-graphite-plate core.
 
     Geometry parameters (cm): slot_depth d, flat_width (slot width w = 2d + flat_width), web_thickness,
-    wall_thickness (shared plate backing between fuel and coolant rows).  See resolve_params().
+    wall_thickness (shared plate backing between fuel and coolant rows).  coolant_depth: optional separate
+    coolant-slot depth (default = slot_depth; coolant width = 2*coolant_depth + flat).  See resolve_params().
     mode="cylinder"  : (default) the plate stack (RectLattice of unit cells) fills a right cylinder of radius
                        R = core_radius and height H = 2R (z in [-R, R]); bare by default (reflector_thickness=0);
                        vacuum outside  -> finite k-eff.
@@ -405,7 +419,7 @@ def build_model(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thicknes
     """
     p = resolve_params(slot_depth, flat_width, web_thickness, wall_thickness,
                        round_location=round_location, slot_width=slot_width, stacking=stacking,
-                       n_slot_pairs=n_slot_pairs, round_side=round_side)
+                       n_slot_pairs=n_slot_pairs, round_side=round_side, coolant_depth=coolant_depth)
     if mode not in ("cylinder", "unit_cell"):
         raise ValueError("mode must be 'cylinder' or 'unit_cell'")
     mats = make_materials(fuel, coolant, graphite, temperature, enrichment)
