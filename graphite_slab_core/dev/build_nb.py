@@ -83,8 +83,9 @@ therefore **one shared wall** between each fuel row and the adjacent coolant row
   universe (odd count per axis, a unit cell centred on the axis) truncated by a `ZCylinder` of radius `R = core_radius`
   (default **70 cm**, ~MSRE core radius) and z-planes at ±R (**H = 2R = D**), vacuum boundary. No plenums, vessel, downcomer
   or headers — **the fuel salt outside the core is not modelled**. `mode="unit_cell"` = periodic unit cell → k-infinity (quick mode).
-* Materials at 922 K (MSRE operating temperature): **fuel = MSRE 235U-operation fuel salt** 7LiF-BeF₂-ZrF₄-UF₄ 65.0-29.17-5.0-0.83 mol%,
-  33.477 wt% U-235 (variable `ENRICHMENT`), 99.995 % Li-7, ρ = 2.575 − 5.13·10⁻⁴·T[°C] g/cc (ORNL sources cited in §2);
+* Materials at 922 K (MSRE operating temperature): **fuel = MSRE carrier salt with 4.0 mol% UF₄** (extra UF₄ taken from LiF),
+  7LiF-BeF₂-ZrF₄-UF₄ **61.83-29.17-5.0-4.0 mol%** (variable `UF4_MOLPCT`), **HALEU 19.75 wt% U-235** (variable `ENRICHMENT`),
+  99.995 % Li-7; ρ = MSRE correlation 2.575 − 5.13·10⁻⁴·T[°C] g/cc rescaled with additive molar volumes → 2.593 g/cc at 922 K (§2);
   coolant = MSRE coolant salt 7LiF-BeF₂ 66-34 mol%; graphite 1.87 g/cc + `c_Graphite` S(α,β).
   No tube walls/liners — the salt wets the graphite directly.
 
@@ -126,7 +127,8 @@ DEFAULTS = dict(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thicknes
 GEOM_OPTS = dict(round_location="both_sides", stacking="plates")                          # Brian's design (defaults)
 
 # ---- fuel ------------------------------------------------------------------------------------------------
-ENRICHMENT = 33.477        # U-235 WEIGHT % of total uranium. Default = MSRE 235U operation (ORNL-4658 Table 2.8)
+ENRICHMENT = 19.75         # U-235 WEIGHT % of total uranium. Default = HALEU (MSRE 235U operation was 33.477, ORNL-4658 Table 2.8)
+UF4_MOLPCT = 4.0           # mol% UF4 in the fuel salt; the difference from MSRE's 0.83 mol% is taken from LiF (0.83 = MSRE salt)
 TEMPERATURE_K = 922.0      # material temperature (MSRE operating ~650 C); salt densities follow ORNL correlations
 
 import sys
@@ -155,22 +157,38 @@ fig = sketch_profiles(d=DEFAULTS["slot_depth"], flat=DEFAULTS["flat_width"], fil
 plt.show()''')
 
 md(r"""
-## 2. Materials — default fuel = MSRE fuel salt (U-235 operation), per ORNL sources
+## 2. Materials — default fuel = MSRE carrier salt with 4.0 mol% UF₄ and HALEU (19.75 wt% U-235)
 
-| Quantity | Value used (default) | Source |
+**Default fuel (Brian, Sep 2026):** 7LiF-BeF₂-ZrF₄-UF₄ **61.83-29.17-5.0-4.0 mol%** — the MSRE fuel salt with UF₄ raised from 0.83 to
+**4.0 mol%, the difference taken from LiF** (`UF4_MOLPCT`, `build_model(..., uf4_mol_pct=...)`; `fuel_composition(x)` gives
+LiF = 65.0 − (x − 0.83)). No thorium. Uranium = **HALEU 19.75 wt% U-235** (`ENRICHMENT`).
+
+* **HALEU isotopics** (`minor_u="correlation"`, default): U-234 = 0.0089 × U-235 wt% = **0.176 wt%** (typical for enrichment from
+  natural feed; ASTM C996 caps U-234 at 1.1 × 10⁴ µg/g U-235, i.e. 0.011 × e), **U-236 = 0** (fresh, non-recycled feed; set
+  `fuel={"u236_trace_wt_pct": ...}` for downblended/recycled material), **U-238 = balance 80.074 wt%**.
+  MSRE uranium is still available: `fuel=MSRE_ISOTOPICS` (U-234 0.342, U-235 33.477, U-236 0.141 wt%).
+* **Density with 4 mol% UF₄:** the MSRE correlation (below) belongs to the 0.83 mol% salt, so it is rescaled by the ratio of
+  (molar mass / molar volume) of the new and the MSRE composition, using **additive molar volumes** from S. Cantor,
+  *Density and viscosity of several molten fluoride mixtures*, ORNL-TM-4308 (1973): LiF 13.24/13.77, BeF₂ 24.0/24.2,
+  ZrF₄ 46/48, UF₄ 45.1/46.1 cm³/mol at 550/700 °C (linear in T). Cantor found additive volumes within ~2 % of measured molar
+  volumes for LiF-BeF₂-(Zr,Th,U)F₄ melts; the ratio form keeps the measured MSRE density exact at 0.83 mol%.
+  Result at 922 K: **ρ = 2.593 g/cm³** (vs 2.242 for the 0.83 mol% salt) → U-235 density 0.0960 g/cm³ of salt
+  (MSRE: 0.0355). Uncertainty of the estimate ~±2 %. Liquidus/solubility of 4 mol% UF₄ in this carrier is **not** checked here.
+
+| Quantity | Value used | Source |
 |---|---|---|
-| Fuel salt composition | 7LiF-BeF₂-ZrF₄-UF₄ **65.0-29.17-5.0-0.83 mol%** | R. E. Thoma, *Chemical Aspects of MSRE Operations*, ORNL-4658 (1971), p. 10–11 (fuel for 235U operation; also Table 1.1: 65-29.2-5-0.83) |
-| Uranium isotopics (start of power operation, run 4-1) | U-234 0.342, **U-235 33.477**, U-236 0.141, U-238 66.041 wt% | ORNL-4658 Table 2.8 |
+| Reference fuel salt (MSRE) | 7LiF-BeF₂-ZrF₄-UF₄ **65.0-29.17-5.0-0.83 mol%** (`uf4_mol_pct=0.83`) | R. E. Thoma, *Chemical Aspects of MSRE Operations*, ORNL-4658 (1971), p. 10–11 (fuel for 235U operation; also Table 1.1: 65-29.2-5-0.83) |
+| MSRE uranium isotopics (start of power operation, run 4-1) — option `MSRE_ISOTOPICS` | U-234 0.342, U-235 33.477, U-236 0.141, U-238 66.041 wt% | ORNL-4658 Table 2.8 |
 | Li-7 in fuel carrier salt | **99.995 at%** (batch assays 99.994–99.996) | ORNL-4658 Table 2.11; same value used in the IRPhEP MSRE benchmark (Shen/Fratoni et al., PHYSOR 2020) |
-| Fuel density | **ρ = 2.575 − 5.13×10⁻⁴·T(°C) g/cm³** (±1 %) → 2.242 g/cm³ at 649 °C (139.9 lb/ft³ at 650 °C) | ORNL-4658 Table 8.2 (Cantor molar-volume method; Table 8.3) |
+| MSRE fuel density (reference for the rescaling) | **ρ = 2.575 − 5.13×10⁻⁴·T(°C) g/cm³** (±1 %) → 2.242 g/cm³ at 649 °C (139.9 lb/ft³ at 650 °C) | ORNL-4658 Table 8.2 (Cantor molar-volume method; Table 8.3) |
 | Coolant salt | 7LiF-BeF₂ 66-34 mol%, 99.992 % Li-7, ρ = 2.214 − 4.2×10⁻⁴·T(°C) → 1.941 g/cm³ at 649 °C | ORNL-4658 Tables 2.1, 8.1; ORNL-4616 |
 | Graphite | 1.87 g/cm³ (MSRE grade CGB), pure C + `c_Graphite` | IRPhEP MSRE benchmark evaluation (1.87 ± 0.02 g/cm³) |
 
 **Enrichment variable:** `ENRICHMENT` (top cell) = U-235 **weight %** of total uranium; also `build_model(..., enrichment=...)`,
 `make_materials(enrichment=...)` and an optional 5th LHS dimension (`LHS_BOUNDS["enrichment"]`, off by default).
-U-234/U-236 scale proportionally with enrichment (`minor_u="scale"`; exact MSRE isotopics at 33.477 wt%);
-use `fuel={"minor_u": "none"}` for a pure U-235/U-238 vector.
-The UF₄ mole fraction stays at 0.83 mol% when enrichment changes (so changing enrichment changes the U-235 loading).
+With the default `minor_u="correlation"` U-234 follows 0.0089 × e and U-236 = 0; `minor_u="scale"` scales the MSRE U-234/U-236
+(exact MSRE isotopics at 33.477 wt%); `fuel={"minor_u": "none"}` gives a pure U-235/U-238 vector.
+The UF₄ mole fraction (`UF4_MOLPCT`) is held when enrichment changes (so changing enrichment changes the U-235 loading).
 
 **Alternatives found in ORNL sources (not used by default; switch via the `fuel=` dict):**
 * Nominal design composition 65-29.1-5-0.9 mol% (ORNL-TM-728, Robertson 1965, Table 2.1; ORNL-4616; Haubenreich & Engel, *Nucl. Appl. Tech.* 8 (1970)); U "about 32 %" (ORNL-4616) / "33 %" (Haubenreich & Engel) enriched.
@@ -180,12 +198,16 @@ The UF₄ mole fraction stays at 0.83 mol% when enrichment changes (so changing 
 """)
 
 code(chunks["2"] + '''
-_m = make_materials(temperature=TEMPERATURE_K, enrichment=ENRICHMENT)
+_m = make_materials(temperature=TEMPERATURE_K, enrichment=ENRICHMENT, uf4_mol_pct=UF4_MOLPCT)
+print("fuel composition (mol%):", fuel_composition(UF4_MOLPCT))
 for k, m in _m.items():
     print(f"{k:9s} {m.name:55s} {m.density:.4f} g/cc @ {m.temperature:.0f} K  nuclides: {', '.join(n.name for n in m.nuclides)}")
 print("uranium vector (wt% of U):", {k: round(100 * v, 3) for k, v in uranium_wt_fractions(
-      ENRICHMENT, DEFAULT_FUEL["u234_wt_pct"], DEFAULT_FUEL["u236_wt_pct"], DEFAULT_FUEL["minor_u"]).items()})
-print(f"U-235 mass fraction in fuel salt: {100 * _m['fuel'].get_mass_density('U235') / _m['fuel'].density:.3f} wt%")''')
+      ENRICHMENT, DEFAULT_FUEL["u234_wt_pct"], DEFAULT_FUEL["u236_wt_pct"], DEFAULT_FUEL["minor_u"],
+      DEFAULT_FUEL["u234_per_u235"], DEFAULT_FUEL["u236_trace_wt_pct"]).items()})
+print(f"U-235 mass fraction in fuel salt: {100 * _m['fuel'].get_mass_density('U235') / _m['fuel'].density:.3f} wt%, "
+      f"U-235 density {_m['fuel'].get_mass_density('U235'):.4f} g/cc")
+print(f"reference MSRE salt (0.83 mol% UF4) density: {make_materials(uf4_mol_pct=0.83)['fuel'].density:.4f} g/cc")''')
 
 md('''## 3. Parameter validation, layer stack and analytic volume fractions
 `resolve_params()` validates the inputs (positive d/web/wall, flat_width ≥ 0), derives `slot_width = 2d + flat_width` and returns the x-layer stack;
@@ -197,7 +219,7 @@ md('''## 4. OpenMC geometry: `build_model(...) -> openmc.Model`''')
 code(chunks["4"])
 
 code(r'''
-RUN_OPTS = dict(particles=PARTICLES, batches=BATCHES, inactive=INACTIVE, temperature=TEMPERATURE_K)
+RUN_OPTS = dict(particles=PARTICLES, batches=BATCHES, inactive=INACTIVE, temperature=TEMPERATURE_K, uf4_mol_pct=UF4_MOLPCT)
 
 GEOM_OPTS_CORE = dict(GEOM_OPTS, mode=MODE, reflector_thickness=REFLECTOR_THICKNESS)
 model = build_model(**DEFAULTS, **GEOM_OPTS_CORE, core_radius=CORE_RADIUS, enrichment=ENRICHMENT, **RUN_OPTS)   # finite core
@@ -291,7 +313,7 @@ def run_and_report(m, subdir, label):
     res = dict(case=label, keff=k.nominal_value, keff_std=k.std_dev, keff_std_pcm=k.std_dev * 1e5,
                leakage_fraction=leak, particles=m.settings.particles, batches=m.settings.batches,
                inactive=m.settings.inactive, runtime_s=dt, library=str(openmc.config.get("cross_sections")),
-               enrichment_u235_wt_pct=ENRICHMENT, temperature_K=TEMPERATURE_K, **DEFAULTS,
+               enrichment_u235_wt_pct=ENRICHMENT, uf4_mol_pct=UF4_MOLPCT, temperature_K=TEMPERATURE_K, **DEFAULTS,
                **{k_: v for k_, v in m.params.items() if k_ in ("mode", "core_radius", "core_height", "reflector_thickness", "lattice_shape")})
     print(f"{label}: k = {res['keff']:.5f} +/- {res['keff_std']:.5f} ({res['keff_std_pcm']:.0f} pcm)"
           + (f", leakage = {leak:.4f}" if leak is not None else "")
@@ -413,7 +435,7 @@ with open(md_path, "w") as fh:
     fh.write(f"# LHS summary ({len(results)} feasible of {len(samples)} samples, seed {LHS_SEED})\n\n")
     fh.write(f"Lengths in cm; slot_width = 2*slot_depth + flat_width. round_location={GEOM_OPTS['round_location']}, stacking={GEOM_OPTS['stacking']}, "
              f"mode={MODE}, R={CORE_RADIUS} cm (H=2R) unless varied, reflector={REFLECTOR_THICKNESS} cm, "
-             f"enrichment {ENRICHMENT} wt% U-235 unless varied, T = {TEMPERATURE_K} K, "
+             f"enrichment {ENRICHMENT} wt% U-235 unless varied, UF4 {UF4_MOLPCT} mol%, T = {TEMPERATURE_K} K, "
              f"{PARTICLES} particles x {BATCHES} batches ({INACTIVE} inactive), library: {openmc.config.get('cross_sections') if HAVE_XS else 'none'}\n\n")
     hdr = ["sample"] + list(tbl.columns)                      # plain markdown table (no 'tabulate' dependency)
     fh.write("| " + " | ".join(hdr) + " |\n|" + "---|" * len(hdr) + "\n")
@@ -430,8 +452,9 @@ fig.tight_layout(); fig.savefig(os.path.join(WORK_DIR, "lhs_summary_table.png"),
 ''')
 
 md(r'''## 9. Depth scans — does a shallower slot improve k-eff?
-Two one-at-a-time scans, holding `flat_width = 0.5`, `web_thickness = 1.5`, `wall_thickness = 0.5` cm, with the same model as the
-baseline (`both_sides` profile, plate stacking, bare cylinder R = 70 cm, H = 2R, default enrichment, 10 000 particles × 100 batches, 40 inactive):
+Two one-at-a-time scans, holding `flat_width = 0.5`, `web_thickness = 1.5`, `wall_thickness = 0.5` cm, with the same geometry model as the
+baseline (`both_sides` profile, plate stacking, bare cylinder R = 70 cm, H = 2R, 10 000 particles × 100 batches, 40 inactive), but with the
+**original MSRE fuel** (0.83 mol% UF₄, MSRE uranium 33.477 wt% U-235) — the scans were done before the switch to HALEU / 4 mol% UF₄:
 
 * **Common depth scan:** fuel and coolant slot depth together, `d = 0.6, 0.8, 1.0, 1.2` cm (`w = 2d + flat`; the pitch shrinks with `d`).
 * **Coolant-only depth scan:** fuel depth fixed at 1.0 cm, `coolant_depth = 0.6 … 1.2` cm (coolant width `w_c = 2 d_c + flat`).
@@ -446,6 +469,8 @@ code(r'''
 RUN_DEPTH_SCAN = False
 SCAN_DEPTHS = [0.6, 0.8, 1.0, 1.2]
 DS_FIXED = dict(flat_width=0.5, web_thickness=1.5, wall_thickness=0.5)
+DS_FUEL = dict(fuel=MSRE_ISOTOPICS, enrichment=MSRE_U235_WT_PCT)          # depth scans used the MSRE fuel ...
+DS_RUN = dict(RUN_OPTS, uf4_mol_pct=0.83)                                 # ... with 0.83 mol% UF4
 SCANS = {  # name: (csv, png, x column, geometry for depth x)
     "common":  ("depth_scan.csv", "depth_scan.png", "slot_depth", lambda x: dict(slot_depth=x, **DS_FIXED)),
     "coolant": ("coolant_depth_scan.csv", "coolant_depth_scan.png", "coolant_depth",
@@ -461,14 +486,14 @@ def _run_k(m, cwd):
 
 def run_depth_scan(name):
     csv, _, xcol, geo_of = SCANS[name]
-    rho_f = make_materials(temperature=TEMPERATURE_K, enrichment=ENRICHMENT)["fuel"].density
+    rho_f = make_materials(temperature=TEMPERATURE_K, uf4_mol_pct=0.83, **DS_FUEL)["fuel"].density
     rows = []
     for x_ in SCAN_DEPTHS:
         geo = geo_of(x_)
         am = analytic_metrics(core_radius=CORE_RADIUS, **geo, **GEOM_OPTS)
         base = os.path.join(WORK_DIR, "depth_scan" if name == "common" else "coolant_depth_scan", f"d{x_:.1f}")
-        ki = _run_k(build_model(**geo, **GEOM_OPTS, mode="unit_cell", enrichment=ENRICHMENT, **RUN_OPTS), base + "_kinf")
-        ke = _run_k(build_model(**geo, **GEOM_OPTS, mode="cylinder", core_radius=CORE_RADIUS, enrichment=ENRICHMENT, **RUN_OPTS), base + "_cyl")
+        ki = _run_k(build_model(**geo, **GEOM_OPTS, mode="unit_cell", **DS_FUEL, **DS_RUN), base + "_kinf")
+        ke = _run_k(build_model(**geo, **GEOM_OPTS, mode="cylinder", core_radius=CORE_RADIUS, **DS_FUEL, **DS_RUN), base + "_cyl")
         rows.append(dict(slot_depth=geo["slot_depth"], coolant_depth=am["coolant_depth"], **DS_FIXED, slot_width=am["slot_width"],
                          coolant_slot_width=am["coolant_slot_width"], kinf=ki[0], kinf_std=ki[1], keff=ke[0], keff_std=ke[1],
                          leakage_fraction=ke[2], fuel_vf=am["fuel_vf"], coolant_vf=am["coolant_vf"], graphite_vf=am["graphite_vf"],
@@ -511,6 +536,160 @@ for name, (csv, png, xcol, _) in SCANS.items():
     ds = depth_scans[name] = pd.read_csv(path)
     print(f"\n{name} depth scan:"); display(ds[[c for c in SHOW if c in ds]].round(5))
     plot_depth_scan(ds, xcol, TITLES[name], os.path.join(WORK_DIR, "figures", png))
+''')
+
+md(r'''## 10. HALEU critical radius (bare cylinder, H = 2R, no reflector)
+Fuel: **7LiF-BeF₂-ZrF₄-UF₄ 61.83-29.17-5.0-4.0 mol%, HALEU 19.75 wt% U-235** (U-234 0.176 wt%, no U-236; ρ = 2.593 g/cc at 922 K, see §2).
+Two geometries (d = 1.0, flat 0.5, web 1.5, wall 0.5 cm, plate stacking):
+**A** = identical fuel/coolant slots; **B** = coolant slots only 0.6 cm deep (`coolant_depth=0.6`, w_c = 1.7 cm).
+
+1. Unit-cell k-inf for A and B (the 0.83 mol% UF₄ HALEU values are kept as a reference point).
+2. Bare-cylinder k-eff for R = 70 … 200 cm (H = 2R).
+3. Critical radius from the one-group bare-core form `1/k_eff = a + b/(R + δ)²` (2-parameter fit with δ = 0, or 3-parameter if δ is physical
+   and improves χ²); Rc solves `1/k = 1`; fit uncertainty by parametric Monte Carlo on the k-eff errors.
+4. One confirmation run at the fitted Rc; the final Rc is corrected with the local slope dk/dR: `Rc = R_conf + (1 − k_conf)/(dk/dR)`,
+   σ(Rc) = σ(k_conf)/(dk/dR).
+5. Masses at Rc: fuel-salt volume = fuel volume fraction × πR²·2R (in-core salt only; no loops/plena), mass with ρ = 2.593 g/cc, U-235 from the
+   material composition.
+
+Run with `dev/haleu_scan.py kinf | rscan A B | confirm A=Rc B=Rc` and `dev/haleu_fit.py`; this cell loads `results/haleu_kinf.csv`,
+`results/haleu_R_scan.csv`, `results/haleu_critical.csv` (set `RUN_HALEU_SCAN = True` to recompute here, ~30 min).''')
+code(r'''
+RUN_HALEU_SCAN = False
+HALEU_CASES = {"A": dict(DEFAULTS, **GEOM_OPTS), "B": dict(DEFAULTS, **GEOM_OPTS, coolant_depth=0.6)}
+HALEU_RADII = [70.0, 100.0, 130.0, 160.0, 200.0]
+RES_DIR = os.path.join(WORK_DIR, "results")
+
+def haleu_masses(case, R):
+    am = analytic_metrics(core_radius=R, **HALEU_CASES[case])
+    f = make_materials(temperature=TEMPERATURE_K, enrichment=ENRICHMENT, uf4_mol_pct=UF4_MOLPCT)["fuel"]
+    Vf = am["core_fuel_volume_l"] * 1000
+    return dict(core_volume_m3=am["core_volume_l"] / 1000, fuel_salt_volume_m3=Vf / 1e6, fuel_salt_mass_kg=Vf * f.density / 1000,
+                u235_mass_kg=Vf * f.get_mass_density("U235") / 1000,
+                u_mass_kg=Vf * sum(f.get_mass_density(n) for n in f.get_nuclides() if n.startswith("U")) / 1000)
+
+if RUN_HALEU_SCAN and HAVE_XS:
+    kr, rr = [], []
+    for c, g in HALEU_CASES.items():
+        k_, s_, _ = _run_k(build_model(**g, mode="unit_cell", enrichment=ENRICHMENT, **RUN_OPTS), os.path.join(WORK_DIR, "haleu", f"{c}_kinf"))
+        kr.append(dict(case=c, uf4_mol_pct=UF4_MOLPCT, enrichment=ENRICHMENT, kinf=k_, kinf_std=s_))
+        for R_ in HALEU_RADII:
+            m_ = build_model(**g, mode="cylinder", core_radius=R_, enrichment=ENRICHMENT, **RUN_OPTS)
+            k_, s_, L_ = _run_k(m_, os.path.join(WORK_DIR, "haleu", f"{c}_R{R_:.1f}"))
+            rr.append(dict(case=c, kind="scan", uf4_mol_pct=UF4_MOLPCT, core_radius=R_, core_height=2 * R_, keff=k_, keff_std=s_,
+                           leakage_fraction=L_, **haleu_masses(c, R_)))
+    pd.DataFrame(kr).to_csv(os.path.join(RES_DIR, "haleu_kinf.csv"), index=False)
+    pd.DataFrame(rr).to_csv(os.path.join(RES_DIR, "haleu_R_scan.csv"), index=False)
+    # (confirmation runs at the fitted Rc: see dev/haleu_scan.py confirm)
+''')
+code(r'''
+"""Critical-radius fit for the HALEU R scan + phone-friendly plot.
+One-group bare-core form with H = 2R:  1/k_eff = a + b/(R + delta)^2   (a ~ 1/k_inf,eff, b ~ M^2 B^2 R^2 / k_inf).
+Rc from 1/k = 1; uncertainty by parametric Monte Carlo on the k-eff statistical errors.
+Writes results/haleu_critical.csv and figures/haleu_R_scan.png."""
+import os, sys, json
+import numpy as np, pandas as pd
+from scipy.optimize import curve_fit
+import matplotlib.pyplot as plt
+
+def inv_k(R, a, b, delta=0.0):
+    return a + b / (R + delta) ** 2
+
+def fit_case(df, n_mc=2000, seed=1):
+    R, k, s = df.core_radius.values, df.keff.values, df.keff_std.values
+    y, sy = 1 / k, s / k**2
+    out = {}
+    for name, f, p0 in (("2p", lambda R, a, b: inv_k(R, a, b), (0.8, 1e3)), ("3p", inv_k, (0.8, 1e3, 5.0))):
+        if name == "3p" and len(R) < 4: continue
+        try:
+            p, cov = curve_fit(f, R, y, p0=p0, sigma=sy, absolute_sigma=True, maxfev=20000)
+        except Exception:
+            continue
+        chi2 = float(np.sum(((f(R, *p) - y) / sy) ** 2)); dof = len(R) - len(p)
+        rc = lambda pp: (np.sqrt(pp[1] / (1 - pp[0])) - (pp[2] if len(pp) > 2 else 0.0)) if pp[0] < 1 else np.nan
+        rng = np.random.default_rng(seed); rcs = []
+        for _ in range(n_mc):
+            try:
+                pp, _ = curve_fit(f, R, y + rng.normal(0, sy), p0=p, sigma=sy, maxfev=20000); rcs.append(rc(pp))
+            except Exception:
+                pass
+        rcs = np.array(rcs); rcs = rcs[np.isfinite(rcs)]
+        out[name] = dict(params=list(map(float, p)), chi2=chi2, dof=dof, Rc=float(rc(p)), Rc_std=float(rcs.std()) if len(rcs) else np.nan,
+                         kinf_fit=1 / p[0])
+    # prefer 3-parameter fit only if delta is physical (0..30 cm) and it lowers chi2/dof
+    best = "2p"
+    if "3p" in out and 0 <= out["3p"]["params"][2] <= 30 and out["3p"]["dof"] > 0 and \
+            out["3p"]["chi2"] / out["3p"]["dof"] < out["2p"]["chi2"] / max(out["2p"]["dof"], 1):
+        best = "3p"
+    return out, best
+
+if os.path.exists(os.path.join(WORK_DIR, "results", "haleu_R_scan.csv")):
+    W = WORK_DIR
+    scan = pd.read_csv(os.path.join(W, "results", "haleu_R_scan.csv"))
+    kinf_all = pd.read_csv(os.path.join(W, "results", "haleu_kinf.csv"))
+    UF4_SCAN = float(scan.uf4_mol_pct.iloc[0]) if "uf4_mol_pct" in scan else 4.0
+    kinf = kinf_all[np.isclose(kinf_all.uf4_mol_pct, UF4_SCAN)].set_index("case")      # k-inf of the scanned salt
+    rows, fits = [], {}
+    for c, g in scan[scan.kind == "scan"].groupby("case"):
+        g = g.sort_values("core_radius"); out, best = fit_case(g); fits[c] = (out, best)
+        conf = scan[(scan.case == c) & (scan.kind == "confirm")]
+        r = dict(case=c, fit=best, Rc_fit=out[best]["Rc"], Rc_fit_std=out[best]["Rc_std"], chi2=out[best]["chi2"], dof=out[best]["dof"],
+                 fit_params=json.dumps(out[best]["params"]), Rc_2p=out["2p"]["Rc"], Rc_3p=out.get("3p", {}).get("Rc", np.nan),
+                 kinf_unit_cell=kinf.loc[c, "kinf"], kinf_unit_cell_std=kinf.loc[c, "kinf_std"])
+        if len(conf):
+            cr = conf.iloc[-1]; p = out[best]["params"]
+            # local slope dk/dR of the fit at the confirmation radius -> corrected Rc
+            Rq = cr.core_radius; h = 0.5
+            dkdR = (1 / inv_k(Rq + h, *p) - 1 / inv_k(Rq - h, *p)) / (2 * h)
+            r.update(R_confirm=Rq, keff_confirm=cr.keff, keff_confirm_std=cr.keff_std, leakage_confirm=cr.leakage_fraction,
+                     dkdR_per_cm=dkdR, Rc=Rq + (1 - cr.keff) / dkdR,
+                     Rc_std=float(cr.keff_std / dkdR), H_c=2 * (Rq + (1 - cr.keff) / dkdR),
+                     # volumes/masses scale with R^3 (H = 2R): evaluate at the corrected Rc
+                     **{k: cr[k] * ((Rq + (1 - cr.keff) / dkdR) / Rq) ** 3
+                        for k in ("core_volume_m3", "fuel_salt_volume_m3", "fuel_salt_mass_kg", "u235_mass_kg", "u_mass_kg")})
+            # systematic: spread of Rc between fit forms and a local fit (R <= 100 cm) - lattice-edge granularity / fit form
+            loc_out, _ = fit_case(g[g.core_radius <= 100], n_mc=200)
+            cands = [out["2p"]["Rc"], out.get("3p", {}).get("Rc", np.nan)] + [v["Rc"] for v in loc_out.values()]
+            cands = [x for x in cands if np.isfinite(x)]
+            r.update(Rc_fit_spread=max(cands) - min(cands))
+        rows.append(r)
+    crit = pd.DataFrame(rows); crit.to_csv(os.path.join(W, "results", "haleu_critical.csv"), index=False)
+    print("unit-cell k-inf (HALEU):"); display(kinf_all[["case", "uf4_mol_pct", "coolant_depth", "kinf", "kinf_std", "fuel_vf", "coolant_vf", "graphite_vf", "graphite_to_fuel"]].round(5))
+    print("R scan:"); display(scan[["case", "kind", "core_radius", "keff", "keff_std", "leakage_fraction", "core_volume_m3", "fuel_salt_volume_m3", "fuel_salt_mass_kg", "u235_mass_kg"]].sort_values(["case", "core_radius"]).round(4))
+    print("critical radius:"); display(crit.T)
+
+    # ---- phone-friendly plot ----
+    colors = {"A": "tab:blue", "B": "tab:red"}
+    labels = {"A": "A: coolant depth 1.0 cm", "B": "B: coolant depth 0.6 cm"}
+    with plt.rc_context({"font.size": 13}):
+        fig, (a1, a2) = plt.subplots(2, 1, figsize=(6, 9.5), sharex=True, gridspec_kw=dict(height_ratios=[1.6, 1]))
+        Rgrid = np.linspace(scan.core_radius.min() * 0.95, scan.core_radius.max() * 1.03, 200)
+        for c, g in scan.groupby("case"):
+            col = colors.get(c, "k"); s_ = g[g.kind == "scan"].sort_values("core_radius"); cf = g[g.kind == "confirm"]
+            a1.errorbar(s_.core_radius, s_.keff, yerr=s_.keff_std, fmt="o", color=col, capsize=4, ms=7, label=labels.get(c, c))
+            if c in fits:
+                out, best = fits[c]; a1.plot(Rgrid, 1 / inv_k(Rgrid, *out[best]["params"]), "-", color=col, lw=1.5, alpha=0.8)
+            if len(cf):
+                a1.errorbar(cf.core_radius, cf.keff, yerr=cf.keff_std, fmt="*", color=col, ms=14, mec="k", capsize=4)
+            if c in kinf.index:
+                a1.axhline(kinf.loc[c, "kinf"], color=col, ls="--", lw=1.2)
+                a1.text(Rgrid[0], kinf.loc[c, "kinf"], f" k-inf {c} = {kinf.loc[c, 'kinf']:.3f}", color=col, va="bottom", fontsize=10)
+            a2.plot(s_.core_radius, s_.leakage_fraction, "o-", color=col, ms=6, lw=1.5)
+        a1.axhline(1.0, color="k", lw=1)
+        for _, r in crit.iterrows():
+            Rc = r.get("Rc", r["Rc_fit"]); sd = r.get("Rc_std", r["Rc_fit_std"])
+            a1.axvline(Rc, color=colors.get(r.case, "k"), ls=":", lw=1.2)
+            a1.annotate(f"Rc {r.case} = {Rc:.1f} ± {sd:.1f} cm", (Rc, 1.0), xytext=(4, -18 if r.case == "A" else 8),
+                        textcoords="offset points", color=colors.get(r.case, "k"), fontsize=10)
+        a1.set_ylabel("bare-cylinder k-eff (H = 2R)"); a1.grid(alpha=0.3); a1.legend(fontsize=10, loc="lower right")
+        a1.set_title(f"HALEU 19.75 wt% U-235, 7LiF-BeF2-ZrF4-UF4\n({100 - 34.17 - UF4_SCAN:.2f}-29.17-5.0-{UF4_SCAN:.1f} mol%), bare, H = 2R; ★ = check at Rc", fontsize=12)
+        a2.set_ylabel("leakage fraction"); a2.set_xlabel("core radius R [cm]"); a2.grid(alpha=0.3)
+        fig.tight_layout(); os.makedirs(os.path.join(W, "figures"), exist_ok=True)
+        fig.savefig(os.path.join(W, "figures", "haleu_R_scan.png"), dpi=150); plt.show()
+
+else:
+    print("no HALEU results found in", os.path.join(WORK_DIR, "results"))
+
 ''')
 
 md('''## Notes / next steps

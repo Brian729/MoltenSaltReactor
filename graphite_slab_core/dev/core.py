@@ -150,16 +150,37 @@ def _formula(compound):
     return {el: int(n) if n else 1 for el, n in re.findall(r"([A-Z][a-z]?)(\d*)", compound)}
 
 MSRE_U235_WT_PCT = 33.477      # U-235 wt% of total U at start of 235U power operation (ORNL-4658 Table 2.8, run 4-1)
+HALEU_U235_WT_PCT = 19.75      # HALEU (< 20 wt% U-235) - DEFAULT enrichment
+U234_PER_U235 = 0.0089         # U-234 wt% ~= 0.0089 x U-235 wt% for enrichment from natural feed (rule of thumb;
+                               # ASTM C996 caps U-234 at 1.1e4 ug/g U-235 = 0.011 x U-235 wt%) -> 0.176 wt% at 19.75
+# Isotopic presets (pass as build_model(..., fuel=...) / make_materials(fuel=...)):
+HALEU_ISOTOPICS = dict(u235_wt_pct=HALEU_U235_WT_PCT, minor_u="correlation", u234_per_u235=U234_PER_U235,
+                       u236_trace_wt_pct=0.0)   # fresh HALEU from natural feed: U-236 ~0 (set >0 for recycled/downblended U)
+MSRE_ISOTOPICS = dict(u235_wt_pct=MSRE_U235_WT_PCT, u234_wt_pct=0.342, u236_wt_pct=0.141, minor_u="scale")
 
-DEFAULT_FUEL = dict(           # MSRE fuel salt, 235U operation (ORNL-4658, R.E. Thoma 1971)
-    name="fuel salt (MSRE 7LiF-BeF2-ZrF4-UF4 65.0-29.17-5.0-0.83)",
-    composition_mol={"LiF": 65.0, "BeF2": 29.17, "ZrF4": 5.0, "UF4": 0.83},   # mol%  (ORNL-4658 p.10)
-    density_a=2.575, density_b=5.13e-4,   # rho[g/cc] = a - b*T[degC]  (ORNL-4658 Table 8.2) -> 2.242 at 649 C
+MSRE_FUEL_MOL = {"LiF": 65.0, "BeF2": 29.17, "ZrF4": 5.0, "UF4": 0.83}   # mol%, MSRE 235U operation (ORNL-4658 p.10)
+UF4_MOLPCT_DEFAULT = 4.0       # Brian: 4.0 mol% UF4, extra UF4 taken from LiF -> 61.83-29.17-5.0-4.0
+
+def fuel_composition(uf4_mol_pct=UF4_MOLPCT_DEFAULT, base=MSRE_FUEL_MOL):
+    """MSRE carrier with UF4 changed to `uf4_mol_pct`; the difference is taken from (or given to) LiF."""
+    x = float(uf4_mol_pct)
+    lif = base["LiF"] - (x - base["UF4"])
+    if not (0 < x and lif > 0):
+        raise ValueError(f"UF4 = {x} mol% not possible (LiF would be {lif:.2f} mol%)")
+    return dict(base, LiF=round(lif, 6), UF4=x)
+
+DEFAULT_FUEL = dict(           # MSRE carrier salt with 4.0 mol% UF4 (from LiF) and HALEU uranium (default)
+    name="fuel salt (7LiF-BeF2-ZrF4-UF4 61.83-29.17-5.0-4.0, HALEU)",
+    composition_mol=fuel_composition(UF4_MOLPCT_DEFAULT),
+    density_a=2.575, density_b=5.13e-4,   # MSRE fuel rho[g/cc] = a - b*T[degC] (ORNL-4658 Table 8.2) -> 2.242 at 649 C ...
+    density_ref_mol=MSRE_FUEL_MOL,        # ... rescaled to the actual composition with Cantor's additive molar volumes
     density=None,                         # set a number (g/cc) to override the correlation
-    u235_wt_pct=MSRE_U235_WT_PCT,         # ENRICHMENT = U-235 WEIGHT % of total uranium
-    u234_wt_pct=0.342, u236_wt_pct=0.141, # ORNL-4658 Table 2.8 (run 4-1 nominal); U-238 = balance (66.041)
-    minor_u="scale",                      # 'scale': U-234/U-236 scale with enrichment (exact MSRE values at 33.477)
-                                          # 'fixed': use the wt% above as given;  'none': U-235 + U-238 only
+    u235_wt_pct=HALEU_U235_WT_PCT,        # ENRICHMENT = U-235 WEIGHT % of total uranium (default HALEU 19.75)
+    minor_u="correlation",                # 'correlation' (default): U-234 = u234_per_u235 x e, U-236 = u236_trace_wt_pct
+                                          # 'scale': MSRE U-234/U-236 (below) scaled with enrichment (exact MSRE at 33.477)
+                                          # 'fixed': use u234_wt_pct / u236_wt_pct as given;  'none': U-235 + U-238 only
+    u234_per_u235=U234_PER_U235, u236_trace_wt_pct=0.0,
+    u234_wt_pct=0.342, u236_wt_pct=0.141, # MSRE run 4-1 (ORNL-4658 Table 2.8) - used by 'scale'/'fixed' (MSRE_ISOTOPICS)
     li7_at_pct=99.995,                    # 7Li assay of MSRE fuel carrier salt (ORNL-4658 Table 2.11: 99.994-99.996)
 )
 DEFAULT_COOLANT = dict(        # MSRE coolant/flush salt  7LiF-BeF2 66-34 mol%
@@ -173,24 +194,48 @@ DEFAULT_GRAPHITE = dict(name="graphite (MSRE CGB, 1.87 g/cc)", density=1.87, sab
 # 1.87 +/- 0.02 g/cc: MSRE grade-CGB graphite density used in the IRPhEP MSRE benchmark evaluation (Fratoni et al.).
 # Pure carbon (no boron impurity) - placeholder for Brian's actual graphite grade.
 
+# Additive molar volumes (cm3/mol) at 550 C and 700 C, S. Cantor, "Density and viscosity of several molten fluoride
+# mixtures", ORNL-TM-4308 (1973): LiF 13.24/13.77, BeF2 24.0/24.2, ZrF4 46/48 (derived), UF4 45.1/46.1 (extrapolated),
+# ThF4 46.15/47.00.  Linear in T between/beyond these points.  Cantor found additive volumes within ~2 % of measured
+# molar volumes for LiF-BeF2-(Th,Zr,U)F4 melts.
+MOLAR_VOLUME = {"LiF": (13.24, 13.77), "BeF2": (24.0, 24.2), "ZrF4": (46.0, 48.0), "UF4": (45.1, 46.1), "ThF4": (46.15, 47.0)}
+
+def molar_volume(compound, temperature_K):
+    v550, v700 = MOLAR_VOLUME[compound]
+    return v550 + (v700 - v550) * ((temperature_K - 273.15) - 550.0) / 150.0
+
 def salt_density(spec, temperature_K):
+    """Density from the (a - b T) correlation.  If spec['density_ref_mol'] is given (the composition the
+    correlation belongs to), rho is rescaled by (M/Vm)_new / (M/Vm)_ref with additive molar volumes."""
     if spec.get("density") is not None:
         return float(spec["density"])
-    return spec["density_a"] - spec["density_b"] * (temperature_K - 273.15)
+    rho = spec["density_a"] - spec["density_b"] * (temperature_K - 273.15)
+    ref = spec.get("density_ref_mol")
+    if ref:
+        def m_over_v(comp):
+            tot = sum(comp.values())
+            M = sum(x / tot * sum(n * openmc.data.atomic_weight(el) for el, n in _formula(c).items()) for c, x in comp.items())
+            V = sum(x / tot * molar_volume(c, temperature_K) for c, x in comp.items())
+            return M / V
+        rho *= m_over_v(spec["composition_mol"]) / m_over_v(ref)
+    return rho
 
-def uranium_wt_fractions(u235_wt_pct, u234_wt_pct=0.0, u236_wt_pct=0.0, minor_u="scale"):
+def uranium_wt_fractions(u235_wt_pct, u234_wt_pct=0.0, u236_wt_pct=0.0, minor_u="correlation",
+                         u234_per_u235=U234_PER_U235, u236_trace_wt_pct=0.0):
     """Return {nuclide: wt fraction of U}.  `u235_wt_pct` = enrichment in WEIGHT percent."""
     e = float(u235_wt_pct)
     if not 0.0 < e <= 100.0:
         raise ValueError(f"enrichment (U-235 wt%) must be in (0, 100], got {e}")
-    if minor_u == "scale":
+    if minor_u == "correlation":
+        w234, w236 = u234_per_u235 * e, u236_trace_wt_pct
+    elif minor_u == "scale":
         w234, w236 = u234_wt_pct * e / MSRE_U235_WT_PCT, u236_wt_pct * e / MSRE_U235_WT_PCT
     elif minor_u == "fixed":
         w234, w236 = u234_wt_pct, u236_wt_pct
     elif minor_u == "none":
         w234 = w236 = 0.0
     else:
-        raise ValueError("minor_u must be 'scale', 'fixed' or 'none'")
+        raise ValueError("minor_u must be 'correlation', 'scale', 'fixed' or 'none'")
     w238 = 100.0 - e - w234 - w236
     if w238 < -1e-9:
         raise ValueError(f"U-234 + U-235 + U-236 exceed 100 wt% (enrichment {e}); use minor_u='none'")
@@ -213,7 +258,8 @@ def make_salt(spec, temperature=922.0):
             mat.add_nuclide("Li7", a * f7); mat.add_nuclide("Li6", a * (1 - f7))
         elif el == "U":
             wf = uranium_wt_fractions(spec["u235_wt_pct"], spec.get("u234_wt_pct", 0.0),
-                                      spec.get("u236_wt_pct", 0.0), spec.get("minor_u", "scale"))
+                                      spec.get("u236_wt_pct", 0.0), spec.get("minor_u", "correlation"),
+                                      spec.get("u234_per_u235", U234_PER_U235), spec.get("u236_trace_wt_pct", 0.0))
             moles = {k: v / _AMU[k] for k, v in wf.items()}                 # wt -> atom fractions
             s = sum(moles.values())
             for k, m in moles.items():
@@ -225,9 +271,15 @@ def make_salt(spec, temperature=922.0):
     mat.set_density("g/cm3", salt_density(spec, temperature))
     return mat
 
-def make_materials(fuel=None, coolant=None, graphite=None, temperature=922.0, enrichment=None):
-    """enrichment: U-235 wt% of uranium (None -> MSRE value, 33.477 wt%)."""
+def make_materials(fuel=None, coolant=None, graphite=None, temperature=922.0, enrichment=None, uf4_mol_pct=None):
+    """enrichment: U-235 wt% of uranium (None -> fuel['u235_wt_pct'], default HALEU 19.75 wt%).
+    MSRE uranium: make_materials(fuel=MSRE_ISOTOPICS).  uf4_mol_pct: UF4 content (None -> default 4.0 mol%);
+    the original MSRE salt is uf4_mol_pct=0.83 (with fuel=MSRE_ISOTOPICS for MSRE uranium)."""
     fuel = {**DEFAULT_FUEL, **(fuel or {})}
+    if uf4_mol_pct is not None:     # UF4 mol% (difference from LiF), density rescaled by additive molar volumes
+        comp = fuel_composition(uf4_mol_pct)
+        fuel["composition_mol"] = comp
+        fuel["name"] = "fuel salt (7LiF-BeF2-ZrF4-UF4 " + "-".join(f"{comp[k]:g}" for k in ("LiF", "BeF2", "ZrF4", "UF4")) + ")"
     if enrichment is not None:
         fuel["u235_wt_pct"] = float(enrichment)
     coolant = {**DEFAULT_COOLANT, **(coolant or {})}
@@ -404,7 +456,7 @@ def _box(Lx, Ly, Lz, bc="transmission", center=(0, 0, 0)):
 def build_model(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thickness=0.5, *,
                 round_location="both_sides", slot_width=None, stacking="plates", n_slot_pairs=2, round_side="+",
                 coolant_depth=None, mode="cylinder", core_radius=70.0, reflector_thickness=0.0,
-                enrichment=None, fuel=None, coolant=None, graphite=None, temperature=922.0,
+                enrichment=None, uf4_mol_pct=None, fuel=None, coolant=None, graphite=None, temperature=922.0,
                 particles=10000, batches=100, inactive=40, seed=1):
     """Return an openmc.Model of the slotted-graphite-plate core.
 
@@ -422,7 +474,7 @@ def build_model(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thicknes
                        n_slot_pairs=n_slot_pairs, round_side=round_side, coolant_depth=coolant_depth)
     if mode not in ("cylinder", "unit_cell"):
         raise ValueError("mode must be 'cylinder' or 'unit_cell'")
-    mats = make_materials(fuel, coolant, graphite, temperature, enrichment)
+    mats = make_materials(fuel, coolant, graphite, temperature, enrichment, uf4_mol_pct)
     univ = build_unit_universe(p, mats)
     Px, Py, Pz = p["pitch_x"], p["pitch_y"], p["pitch_z"]
 

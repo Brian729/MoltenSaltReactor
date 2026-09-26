@@ -68,7 +68,7 @@ def run_lhs(samples, work_dir, geometry_opts=None, run_opts=None, run_transport=
         rad = float(s["core_radius"])
         d = os.path.join(work_dir, f"sample_{idx:03d}")
         os.makedirs(d, exist_ok=True)
-        row = {"sample": idx, **geo, "enrichment": enr if enr is not None else MSRE_U235_WT_PCT,
+        row = {"sample": idx, **geo, "enrichment": enr if enr is not None else DEFAULT_FUEL["u235_wt_pct"],
                "core_radius": rad, **analytic_metrics(**geo, core_radius=rad, **geometry_opts), "keff": np.nan, "keff_std": np.nan,
                "runtime_s": np.nan, "status": "built"}
         try:

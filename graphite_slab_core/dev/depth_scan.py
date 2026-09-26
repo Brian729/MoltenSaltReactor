@@ -5,7 +5,7 @@ Runs unit-cell k-inf and bare-cylinder k-eff for each depth.  Plots are made in 
 import os, sys, time, json, math
 import numpy as np, pandas as pd, openmc
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from core import build_model, analytic_metrics, make_materials
+from core import build_model, analytic_metrics, make_materials, MSRE_ISOTOPICS
 
 WORK = os.environ.get("MSR_WORK_DIR", "/workspace/msr_slab")
 SCAN = sys.argv[1] if len(sys.argv) > 1 else "common"
@@ -29,14 +29,15 @@ def run(m, cwd):
         leak = float(gt["mean"][names.index("leakage")])
     return k.nominal_value, k.std_dev, leak, time.time() - t0
 
-rho_fuel = make_materials(temperature=T, enrichment=ENR)["fuel"].density   # g/cc
+FUEL = dict(fuel=MSRE_ISOTOPICS, uf4_mol_pct=0.83)   # depth scans: original MSRE fuel (0.83 mol% UF4, MSRE uranium)
+rho_fuel = make_materials(temperature=T, enrichment=ENR, **FUEL)["fuel"].density   # g/cc
 rows = []
 for d in DEPTHS:
     geo = dict(slot_depth=d, **FIXED) if SCAN == "common" else dict(slot_depth=FUEL_DEPTH, coolant_depth=d, **FIXED)
     am = analytic_metrics(core_radius=R, **geo, **OPTS)
     base = os.path.join(WORK, "depth_scan" if SCAN == "common" else "coolant_depth_scan", f"d{d:.1f}")
-    kinf, kinf_s, _, t1 = run(build_model(**geo, **OPTS, mode="unit_cell", enrichment=ENR, **RUN), base + "_kinf")
-    m = build_model(**geo, **OPTS, mode="cylinder", core_radius=R, reflector_thickness=0.0, enrichment=ENR, **RUN)
+    kinf, kinf_s, _, t1 = run(build_model(**geo, **OPTS, mode="unit_cell", enrichment=ENR, **FUEL, **RUN), base + "_kinf")
+    m = build_model(**geo, **OPTS, mode="cylinder", core_radius=R, reflector_thickness=0.0, enrichment=ENR, **FUEL, **RUN)
     keff, keff_s, leak, t2 = run(m, base + "_cyl")
     r = dict(slot_depth=geo["slot_depth"], coolant_depth=am["coolant_depth"], flat_width=FIXED["flat_width"],
              slot_width=am["slot_width"], coolant_slot_width=am["coolant_slot_width"], web_thickness=FIXED["web_thickness"],
