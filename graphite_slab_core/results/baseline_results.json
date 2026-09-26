@@ -1,0 +1,48 @@
+[
+ {
+  "case": "unit cell (periodic) k-inf",
+  "keff": 1.6309057410830603,
+  "keff_std": 0.0010693975102581106,
+  "keff_std_pcm": 106.93975102581106,
+  "leakage_fraction": 0.0,
+  "particles": 10000,
+  "batches": 100,
+  "inactive": 40,
+  "runtime_s": 120.37560772895813,
+  "library": "/workspace/nucdata/endfb-viii.0-hdf5/cross_sections.xml",
+  "enrichment_u235_wt_pct": 33.477,
+  "temperature_K": 922.0,
+  "slot_width": 2.0,
+  "slot_depth": 1.5,
+  "web_thickness": 1.5,
+  "wall_thickness": 2.0,
+  "mode": "unit_cell"
+ },
+ {
+  "case": "finite cylinder R=70.0 cm, H=140.0 cm k-eff",
+  "keff": 0.8188824830715249,
+  "keff_std": 0.0013567637100245394,
+  "keff_std_pcm": 135.67637100245395,
+  "leakage_fraction": 0.48047999999999985,
+  "particles": 10000,
+  "batches": 100,
+  "inactive": 40,
+  "runtime_s": 78.12314534187317,
+  "library": "/workspace/nucdata/endfb-viii.0-hdf5/cross_sections.xml",
+  "enrichment_u235_wt_pct": 33.477,
+  "temperature_K": 922.0,
+  "slot_width": 2.0,
+  "slot_depth": 1.5,
+  "web_thickness": 1.5,
+  "wall_thickness": 2.0,
+  "core_radius": 70.0,
+  "core_height": 140.0,
+  "reflector_thickness": 0.0,
+  "lattice_shape": [
+   13,
+   41,
+   41
+  ],
+  "mode": "cylinder"
+ }
+]

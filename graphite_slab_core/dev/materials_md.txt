@@ -1,0 +1,24 @@
+md(r"""
+## 2. Materials — default fuel = MSRE fuel salt (U-235 operation), per ORNL sources
+
+| Quantity | Value used (default) | Source |
+|---|---|---|
+| Fuel salt composition | 7LiF-BeF₂-ZrF₄-UF₄ **65.0-29.17-5.0-0.83 mol%** | R. E. Thoma, *Chemical Aspects of MSRE Operations*, ORNL-4658 (1971), p. 10–11 (fuel for 235U operation; also Table 1.1: 65-29.2-5-0.83) |
+| Uranium isotopics (start of power operation, run 4-1) | U-234 0.342, **U-235 33.477**, U-236 0.141, U-238 66.041 wt% | ORNL-4658 Table 2.8 |
+| Li-7 in fuel carrier salt | **99.995 at%** (batch assays 99.994–99.996) | ORNL-4658 Table 2.11; same value used in the IRPhEP MSRE benchmark (Shen/Fratoni et al., PHYSOR 2020) |
+| Fuel density | **ρ = 2.575 − 5.13×10⁻⁴·T(°C) g/cm³** (±1 %) → 2.242 g/cm³ at 649 °C (139.9 lb/ft³ at 650 °C) | ORNL-4658 Table 8.2 (Cantor molar-volume method; Table 8.3) |
+| Coolant salt | 7LiF-BeF₂ 66-34 mol%, 99.992 % Li-7, ρ = 2.214 − 4.2×10⁻⁴·T(°C) → 1.941 g/cm³ at 649 °C | ORNL-4658 Tables 2.1, 8.1; ORNL-4616 |
+| Graphite | 1.87 g/cm³ (MSRE grade CGB), pure C + `c_Graphite` | IRPhEP MSRE benchmark evaluation (1.87 ± 0.02 g/cm³) |
+
+**Enrichment variable:** `ENRICHMENT` (top cell) = U-235 **weight %** of total uranium; also `build_model(..., enrichment=...)`,
+`make_materials(enrichment=...)` and an optional 5th LHS dimension (`LHS_BOUNDS["enrichment"]`, off by default).
+U-234/U-236 scale proportionally with enrichment (`minor_u="scale"`; exact MSRE isotopics at 33.477 wt%);
+use `fuel={"minor_u": "none"}` for a pure U-235/U-238 vector.
+The UF₄ mole fraction stays at 0.83 mol% when enrichment changes (so changing enrichment changes the U-235 loading).
+
+**Alternatives found in ORNL sources (not used by default; switch via the `fuel=` dict):**
+* Nominal design composition 65-29.1-5-0.9 mol% (ORNL-TM-728, Robertson 1965, Table 2.1; ORNL-4616; Haubenreich & Engel, *Nucl. Appl. Tech.* 8 (1970)); U "about 32 %" (ORNL-4616) / "33 %" (Haubenreich & Engel) enriched.
+* Zero-power first-criticality salt 64.88-29.27-5.06-0.79 mol%, 1.408 wt% U-235 in salt, ρ = 2.3275 ± 0.016 g/cm³ at 638 °C (IRPhEP MSRE benchmark).
+* Density: in-reactor inventory estimate 139.01 lb/ft³ (2.227 g/cm³) at start of power operation; electrical-probe correlation ρ = 2.848 − 7.69×10⁻⁴·T(°C) (2.35 g/cm³ at 650 °C); design value 141 lb/ft³ (2.26 g/cm³) (ORNL-4658 §8.2, Table 8.3).
+* Li-7: "at least 99.99 %" (ORNL-4616), 99.994 % (ORNL-TM-728 Table 2.1).
+""")
