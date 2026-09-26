@@ -15,20 +15,22 @@ md = lambda s: cells.append(nbf.v4.new_markdown_cell(s.strip("\n")))
 code = lambda s: cells.append(nbf.v4.new_code_cell(s.strip("\n")))
 
 md(r'''
-# Slotted graphite-slab MSR core cell — OpenMC CSG model + Latin-hypercube study
+# Slotted graphite-plate MSR core — OpenMC CSG model + Latin-hypercube study
 
-**Concept (Brian):** graphite slabs with **vertical fuel slots** alternating with **horizontal coolant slots**.
-Both slot types are milled with the **same profile**: `slot_width` × `slot_depth`, flat on the mouth side and
-**rounded on one side only, radius = `slot_depth`** (reflects how the slots are machined). Slots are separated by
-graphite **webs** (`web_thickness`); slabs are isolated from each other by a graphite **wall** (`wall_thickness`).
+**Concept (Brian):** graphite plates with machined slots; plates are stacked with every other plate rotated 90°, so
+rows of **vertical fuel slots** alternate with rows of **horizontal coolant slots**. All slots have the **same
+machined profile and size**: depth `d`, both side walls **quarter-rounds of radius `d`**, flat bottom `flat_width`
+between them → slot width **`w = 2d + flat_width`**. Neighbouring slots in a row are separated by graphite **webs**
+(`web_thickness`); each slot row is closed by the solid backing of the next plate — **one shared wall**
+(`wall_thickness`) between every fuel row and coolant row.
 
 This notebook:
-1. defines the geometry with OpenMC CSG (`build_model(slot_width, slot_depth, web_thickness, wall_thickness, **opts)`),
-2. plots it (xy / xz / yz slices, coloured by material),
+1. defines the geometry with OpenMC CSG (`build_model(slot_depth, flat_width, web_thickness, wall_thickness, **opts)`),
+2. plots it (profile sketch, full-core and close-up xy / xz / yz slices, unit cell; coloured by material),
 3. checks the CSG volumes against closed-form area formulas,
-4. runs the first model (finite cylindrical core, R = 70 cm, H = 2R, MSRE fuel salt) and a quick unit-cell k-inf,
-5. sets up a Latin-hypercube sweep over the four parameters (`scipy.stats.qmc.LatinHypercube`; enrichment and core radius optional),
-   with transport switched by `RUN_TRANSPORT` (finite-cylinder k-eff by default).
+4. runs the first model (bare finite cylinder, R = 70 cm, H = 2R, MSRE fuel salt) and a quick unit-cell k-inf,
+5. sets up a Latin-hypercube sweep over `slot_depth`, `flat_width`, `web_thickness`, `wall_thickness`
+   (`scipy.stats.qmc.LatinHypercube`; enrichment and core radius optional), transport switched by `RUN_TRANSPORT`.
 
 Everything is in this notebook (no helper modules needed). Tested with OpenMC 0.16.0, SciPy 1.18, pandas 3.0.
 ''')
@@ -36,64 +38,63 @@ Everything is in this notebook (no helper modules needed). Tested with OpenMC 0.
 md(r'''
 ## Geometry interpretation & assumptions  (edit here first if anything is wrong)
 
-**Axes:** `x` = slab-thickness / stacking direction, `y` = horizontal in the slab plane, `z` = vertical.
+**Axes:** `x` = plate-stacking direction, `y` = horizontal in the plate plane, `z` = vertical.
 
-**Through the thickness (x) of one slab** the slot rows alternate, separated by webs; slabs are separated by a wall:
+**Plate stack (confirmed by Brian):** slots are machined into one face of a graphite plate (depth `d`); the rest of the
+plate is a solid backing of thickness `wall_thickness`. Plates are stacked along x, alternately rotated 90°, so the
+rows alternate fuel / coolant and each row's open mouth is closed by the backing of the next plate. The backing is
+therefore **one shared wall** between each fuel row and the adjacent coolant row (`stacking="plates"`, default):
 
 ```
- x ──►   |<──────────────────────── one slab ─────────────────────────>|<-wall->|
-         | F-row |  web  | C-row |  web  | F-row |  web  | C-row |      | graphite| F-row ...
-         |<-d-->|<t_web>|<-d-->|<t_web>|<-d-->|<t_web>|<-d-->|      |<t_wall>|
-   F-row = row of vertical fuel slots   (run along z, width along y, pitch w + t_web in y)
+ x ──►  |<-- fuel plate -->|<-- coolant plate -->|<-- fuel plate ...
+        | F-row  |  wall   | C-row   |  wall     | F-row
+        |<- d -->|<t_wall->|<- d --->|<t_wall-->|
+   F-row = row of vertical fuel slots      (run along z, width along y, pitch w + t_web in y)
    C-row = row of horizontal coolant slots (run along y, width along z, pitch w + t_web in z)
-   n_slot_pairs = number of (F,C) pairs per slab  (default 2, as drawn)
+   unit cell: P_x = 2 (d + t_wall),  P_y = P_z = w + t_web
 ```
 
-**Shared milled-slot profile** (one function `milled_slot_region()` builds both slot types, just oriented differently):
+**Shared machined-slot profile** (one function `milled_slot_region()` builds both slot types, just oriented differently):
 
 ```
   u (across width) ──►
-  0                w-d        w
-  +=================+=========+   <- mouth: flat, open face (closed by the neighbouring web/wall graphite)
-  |                 |       .'
-  |      salt       |    .'        one side wall is a quarter-round of radius R = d,
-  |                 | .'           centre on the mouth plane at u = w-d
-  +-----------------+'            <- flat bottom, width w-d, at depth v = d
-  v (depth into graphite, +x)
+  0     d            w-d     w
+  +=====+=============+=======+   <- mouth: open face (closed by the next plate's backing wall)
+   '.   |             |    .'
+     '. |    salt     | .'         both side walls: quarter-rounds of radius R = d,
+       '+-------------+'           centres on the mouth plane at u = d and u = w-d
+        |<- flat_w -->|           <- flat bottom at depth v = d
+  v (depth into graphite, +x)          w = 2d + flat_width   (flat_width = 0 -> half-round)
 ```
-* Fuel slot: this profile in the **x–y** plane, extruded along **z** (vertical). Coolant slot: same profile in the **x–z** plane, extruded along **y** (horizontal).
-* CSG: `slot = [rectangle (w-d) × d]  ∪  [cylinder(R=d, axis = run direction, centred on the mouth plane) ∩ (depth ≥ 0) ∩ (u ≥ w-d)]`.
-  Graphite = complement of all slots. Cross-section area `A = (w-d)·d + π d²/4`.
-* **Why this reading:** "rounded only on one side, radius = depth" is what a cutter with a radius-`d` flank leaves
-  (e.g. a ball-nose/radius cutter of radius `d` plunged to full depth along one edge, square end mill clearing the rest).
-  The arc is centred on the mouth plane so the slot is widest at the mouth → no undercut, machinable from the open face.
-  Consequence / constraint: **`slot_width ≥ slot_depth`** (at `w = d` the slot is a pure quarter-circle). Infeasible LHS samples are filtered.
-* **Flags for the alternatives:**
-  * `round_location="side"` (default, above) · `"bottom"` = U-groove: flat parallel sides, arc bottom of radius `d` centred on the
-    mouth mid-width (needs `w ≤ 2d`; `w = 2d` is a half-round) · `"none"` = square slot (reference).
-  * `fuel_round_side` / `coolant_round_side` = `"+"` or `"-"`: which lateral side carries the radius (+y/−y for fuel, +z/−z for coolant).
-* **Not modelled:** the run-out radius at the *ends* of a slot (where a cutter enters/exits along its run direction).
-  The unit cell is infinite along the slot run direction; in the finite model slots simply end at the slab boundary (plugged by the reflector).
+* Default `round_location="both_sides"` (full-radius corners on both sides). CSG:
+  `slot = [cyl(R=d, centre u=d) ∩ (u ≤ d)] ∪ [rectangle flat_width × d] ∪ [cyl(R=d, centre u=w−d) ∩ (u ≥ w−d)]`, all ∩ (depth ≥ 0);
+  cylinder axes = slot run direction. Area `A = flat_width·d + π d²/2`. Graphite = complement of all slots.
+* Fuel slot: profile in the **x–y** plane, extruded along **z**. Coolant slot: the same profile in the **x–z** plane, extruded along **y**.
+* **All slots identical** (fuel = coolant width, depth, profile) and **one web thickness everywhere**: `web_thickness` is the land
+  between neighbouring slots of a row (the only web in the plate stack; rows are separated by the shared wall).
+* Every sample is feasible by construction (`d > 0`, `flat_width ≥ 0`, `web > 0`, `wall > 0`).
+* Legacy options (not default): `round_location="side"` (one side rounded, w = d + flat), `"bottom"` (U-groove, explicit
+  `slot_width ≤ 2d`), `"none"` (square, w = flat); `stacking="interleaved"` (old multi-row slabs with webs between rows).
+* **Not modelled:** the run-out radius at the *ends* of a slot; slots are infinite in the unit cell and cut off at the cylinder surface.
 
-**Other assumptions (placeholders — change freely):**
-* All slots open toward −x (mouth on the −x face of each slot row) and are closed by the next graphite layer; i.e. a slab is a stack of
-  milled plates of thickness `d + t_web`. Mouth direction does not affect volume fractions.
-* `web_thickness` is used both between slot rows (in x) **and** between neighbouring slots in the same row (in y / z).
-  Pass `inplane_web=` to decouple the in-row land from the through-thickness web.
-* `wall_thickness` = total graphite between the last slot row of one slab and the first of the next (one shared wall in the periodic cell).
-  If each slab has its own skin of thickness `t`, use `wall_thickness = 2t`.
-* Fuel and coolant slots use the **same** width, depth and profile (as described). Unit cell pitch: `P_x = 2n·d + (2n−1)·t_web + t_wall`,
-  `P_y = P_z = w + t_web`.
-* **Default model = finite cylindrical core** (`mode="cylinder"`): a `RectLattice` of the unit-cell universe (odd count per axis,
-  a unit cell centred on the axis) is truncated by a `ZCylinder` of radius `R = core_radius` (default **70 cm**, ~MSRE core radius)
-  and z-planes at ±R (**H = 2R = D**). Vacuum boundary; optional graphite reflector `reflector_thickness` (default 0, bare core).
-  Slots are simply cut off at the cylinder surface (salt in the partial slots at the boundary is kept; no plenums, no vessel,
-  no downcomer, no inlet/outlet headers — so **the fuel salt outside the core is not modelled**).
-  `mode="unit_cell"` = one unit cell with periodic boundaries on all six faces → k-infinity (quick mode).
+**Core and materials:**
+* **Default model = bare finite cylindrical core** (`mode="cylinder"`, `reflector_thickness = 0`): a `RectLattice` of the unit-cell
+  universe (odd count per axis, a unit cell centred on the axis) truncated by a `ZCylinder` of radius `R = core_radius`
+  (default **70 cm**, ~MSRE core radius) and z-planes at ±R (**H = 2R = D**), vacuum boundary. No plenums, vessel, downcomer
+  or headers — **the fuel salt outside the core is not modelled**. `mode="unit_cell"` = periodic unit cell → k-infinity (quick mode).
 * Materials at 922 K (MSRE operating temperature): **fuel = MSRE 235U-operation fuel salt** 7LiF-BeF₂-ZrF₄-UF₄ 65.0-29.17-5.0-0.83 mol%,
   33.477 wt% U-235 (variable `ENRICHMENT`), 99.995 % Li-7, ρ = 2.575 − 5.13·10⁻⁴·T[°C] g/cc (ORNL sources cited in §2);
   coolant = MSRE coolant salt 7LiF-BeF₂ 66-34 mol%; graphite 1.87 g/cc + `c_Graphite` S(α,β).
-  No structural tube walls/liners are modelled — the salt wets the graphite directly.
+  No tube walls/liners — the salt wets the graphite directly.
+
+### Note on wall thickness (rule of thumb — not a qualified design)
+* Start at **5 mm** (default `wall_thickness = 0.5` cm); **~3 mm** is a practical floor for machining and handling nuclear graphite.
+* **Pressure is not limiting.** Treating the wall over one slot as a plate strip of span `w` and thickness `t` loaded by the
+  fuel/coolant pressure difference `p` (< 5 psi ≈ 0.034 MPa): σ ≈ p·w²/(2t²) ≈ **0.4 MPa** for the defaults (w = 2.5 cm, t = 5 mm),
+  and only ~6 MPa at the most extreme LHS corner (w = 5.5 cm, t = 3 mm) — compared with ~30–50 MPa flexural strength of nuclear graphite.
+* The real limits are **machinability**, **irradiation-induced dimensional change and the resulting internal stress over ~5 years**,
+  **salt permeation / fuel–coolant cross-leak** through a thin wall, and component tolerances. The wall's **thermal
+  resistance is minor** compared with the salt-side film resistances.
 ''')
 
 code(r'''
@@ -119,6 +120,10 @@ CORE_RADIUS = 70.0         # cm; H = 2R = 140 cm.  (MSRE graphite core radius wa
 REFLECTOR_THICKNESS = 0.0  # cm of graphite around the cylinder (side, top, bottom); 0 = bare core
 THREADS = None             # None = all OpenMP threads
 
+# ---- default geometry (cm) --------------------------------------------------------------------------------
+DEFAULTS = dict(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thickness=0.5)   # -> slot width w = 2.5 cm
+GEOM_OPTS = dict(round_location="both_sides", stacking="plates")                          # Brian's design (defaults)
+
 # ---- fuel ------------------------------------------------------------------------------------------------
 ENRICHMENT = 33.477        # U-235 WEIGHT % of total uranium. Default = MSRE 235U operation (ORNL-4658 Table 2.8)
 TEMPERATURE_K = 922.0      # material temperature (MSRE operating ~650 C); salt densities follow ORNL correlations
@@ -142,10 +147,10 @@ print("OpenMC", openmc.__version__, "| cross sections:", openmc.config.get("cros
 print("WORK_DIR =", WORK_DIR)
 ''')
 
-md("## 1. Shared milled-slot profile (fuel **and** coolant)")
+md("## 1. Shared machined-slot profile (fuel **and** coolant): double-rounded slot, w = 2d + flat")
 code(chunks["1"])
 code(SKETCH + '''
-fig = sketch_profiles(w=2.0, d=1.5, filename=os.path.join(WORK_DIR, "profile_sketch.png"))
+fig = sketch_profiles(d=DEFAULTS["slot_depth"], flat=DEFAULTS["flat_width"], filename=os.path.join(WORK_DIR, "profile_sketch.png"))
 plt.show()''')
 
 md(r"""
@@ -182,7 +187,7 @@ print("uranium vector (wt% of U):", {k: round(100 * v, 3) for k, v in uranium_wt
 print(f"U-235 mass fraction in fuel salt: {100 * _m['fuel'].get_mass_density('U235') / _m['fuel'].density:.3f} wt%")''')
 
 md('''## 3. Parameter validation, layer stack and analytic volume fractions
-`resolve_params()` validates the inputs (positive, `w ≥ d` for the one-side radius, …) and returns the x-layer stack;
+`resolve_params()` validates the inputs (positive d/web/wall, flat_width ≥ 0), derives `slot_width = 2d + flat_width` and returns the x-layer stack;
 `analytic_metrics()` gives exact volume fractions / moderator-to-fuel ratio for the periodic cell (no transport needed).''')
 code(chunks["3"] + '''
 pd.Series(analytic_metrics()).to_frame("default geometry")''')
@@ -191,16 +196,13 @@ md('''## 4. OpenMC geometry: `build_model(...) -> openmc.Model`''')
 code(chunks["4"])
 
 code(r'''
-# ---- default geometry (cm) ----
-DEFAULTS = dict(slot_width=2.0, slot_depth=1.5, web_thickness=1.5, wall_thickness=2.0)
-GEOM_OPTS = dict(n_slot_pairs=2, round_location="side", fuel_round_side="+", coolant_round_side="+")
 RUN_OPTS = dict(particles=PARTICLES, batches=BATCHES, inactive=INACTIVE, temperature=TEMPERATURE_K)
 
 GEOM_OPTS_CORE = dict(GEOM_OPTS, mode=MODE, reflector_thickness=REFLECTOR_THICKNESS)
 model = build_model(**DEFAULTS, **GEOM_OPTS_CORE, core_radius=CORE_RADIUS, enrichment=ENRICHMENT, **RUN_OPTS)   # finite core
 model_uc = build_model(**DEFAULTS, **GEOM_OPTS, mode="unit_cell", enrichment=ENRICHMENT, **RUN_OPTS)            # k-inf cell
 p = model_uc.params
-print("layers along x:", p["layers"])
+print("layers along x:", p["layers"], f"| slot width w = 2d + flat = {p['slot_width']:.3f} cm")
 print(f"unit cell pitch  Px={p['pitch_x']:.3f}  Py={p['pitch_y']:.3f}  Pz={p['pitch_z']:.3f} cm")
 if MODE == "cylinder":
     print(f"core: R = {CORE_RADIUS} cm, H = {2*CORE_RADIUS} cm, reflector = {REFLECTOR_THICKNESS} cm, "
@@ -220,16 +222,16 @@ OpenMC's plotter needs a `cross_sections.xml`; without one the helper falls back
 code(PLOT_HELPERS)
 code(r'''
 R_ = CORE_RADIUS + REFLECTOR_THICKNESS
-Px, Py, Pz, d, tw = p["pitch_x"], p["pitch_y"], p["pitch_z"], p["slot_depth"], p["web_thickness"]
+Px, Py, Pz, d = p["pitch_x"], p["pitch_y"], p["pitch_z"], p["slot_depth"]
 # full core
 plot_slice(model, "xy", origin=(0, 0, 0), width=(2.1 * R_, 2.1 * R_), pixels=(1600, 1600),
            title=f"full core, xy (horizontal) slice at z=0 (R = {CORE_RADIUS} cm)", filename=os.path.join(WORK_DIR, "geom_core_xy.png"))
 plot_slice(model, "xz", origin=(0, 0, 0), width=(2.1 * R_, 2.1 * R_), pixels=(1600, 1600),
            title=f"full core, xz (vertical) slice at y=0 (H = {2*CORE_RADIUS} cm)", filename=os.path.join(WORK_DIR, "geom_core_xz.png"))
 # close-ups of the slot pattern at the core centre (a unit cell is centred on the axis)
-W = (2 * Px + 1, 4 * Py + 1, 4 * Pz + 1)
-x_fuel = -Px / 2 + 0.35 * d                  # inside the first fuel-slot row of the central unit cell
-x_cool = -Px / 2 + d + tw + 0.35 * d         # inside the first coolant-slot row
+W = (4 * Px + 1, 4 * Py + 1, 4 * Pz + 1)
+x_fuel = layer_start(p, "F") + 0.35 * d      # inside the fuel-slot row of the central unit cell
+x_cool = layer_start(p, "C") + 0.35 * d      # inside the coolant-slot row
 plot_slice(model, "xy", origin=(0, 0, 0), width=(W[0], W[1]), pixels=(1200, int(1200 * W[1] / W[0])),
            title="close-up xy at z=0 (through coolant-slot centres): fuel-slot profiles, coolant slots lengthwise",
            filename=os.path.join(WORK_DIR, "geom_xy.png"))
@@ -255,8 +257,13 @@ md('''## 6. Check: CSG volumes (Monte-Carlo point sampling of the OpenMC geometr
 Pure Python, no nuclear data needed. Agreement within ~2σ confirms the CSG matches the intended profile.''')
 code(r'''
 rows = []
-for loc, w in [("side", 2.0), ("bottom", 2.0), ("none", 2.0), ("side", 1.5)]:
-    kw = dict(DEFAULTS, slot_width=w, round_location=loc)
+cases = [("both_sides", None, 0.5), ("both_sides", None, 0.0), ("both_sides", None, 1.5),
+         ("side", 2.5, None), ("bottom", 2.0, None), ("none", 2.5, None)]
+for loc, w, flat in cases:
+    kw = dict(DEFAULTS, round_location=loc)
+    if w is not None: kw["slot_width"] = w
+    if flat is not None: kw["flat_width"] = flat
+    w = resolve_params(**kw)["slot_width"]
     m = build_model(**kw, mode="unit_cell")
     mc = csg_volume_check(m, n=20000, seed=1)
     an = analytic_metrics(**kw)
@@ -310,20 +317,21 @@ else:
 """)
 
 md('''## 8. Latin-hypercube sampling of the four geometry parameters
+* Sampled: `slot_depth` d, `flat_width`, `web_thickness`, `wall_thickness`; the slot width is **derived**, `w = 2d + flat_width`.
 * `LHS_BOUNDS` — (low, high) in cm for each free parameter; `FIXED` — hold any parameter constant (it is removed from the hypercube).
-* Samples violating geometric feasibility (e.g. `slot_width < slot_depth` for the one-side radius) are **filtered** and reported.
+* With the double-rounded profile every sample is feasible by construction (the feasibility filter is kept for legacy profiles).
 * Each feasible sample gets its own directory `lhs_runs/sample_XXX/` with `model.xml` + `params.json` (+ statepoint if run).''')
 code(lhs)
 code(r'''
 LHS_BOUNDS = {
-    "slot_width":     (1.0, 2.5),
     "slot_depth":     (0.8, 2.0),
+    "flat_width":     (0.0, 1.5),     # slot width w = 2*slot_depth + flat_width  (1.6 - 5.5 cm)
     "web_thickness":  (0.8, 2.0),
-    "wall_thickness": (1.0, 3.0),
+    "wall_thickness": (0.3, 1.5),     # 3 mm practical floor (see wall-thickness note)
     # "enrichment":   (5.0, 33.477),   # optional: U-235 wt% of U (off -> ENRICHMENT for every sample)
     # "core_radius":  (50.0, 100.0),   # optional: cylinder radius R in cm, H = 2R (off -> CORE_RADIUS)
 }
-FIXED = {}                  # e.g. {"wall_thickness": 2.0}
+FIXED = {}                  # e.g. {"wall_thickness": 0.5}
 N_SAMPLES, LHS_SEED = 12, 2026
 LHS_DIR = os.path.join(WORK_DIR, "lhs_runs")
 
@@ -357,7 +365,7 @@ results = run_lhs(samples, LHS_DIR, geometry_opts=GEOM_OPTS_CORE, run_opts=RUN_O
 csv_path = os.path.join(WORK_DIR, "lhs_results.csv")
 results.to_csv(csv_path)
 print("saved", csv_path)
-display(results[list(ALL_PARAMS) + ["fuel_vf", "coolant_vf", "graphite_vf", "graphite_to_fuel", "keff", "keff_std", "runtime_s", "status"]].round(4))
+display(results[list(PARAM_NAMES) + ["slot_width"] + list(OPTIONAL_PARAMS) + ["fuel_vf", "coolant_vf", "graphite_vf", "graphite_to_fuel", "keff", "keff_std", "runtime_s", "status"]].round(4))
 ''')
 code(r'''
 have_k = results["keff"].notna().any()
@@ -390,11 +398,11 @@ if have_k:
     fig.suptitle(f"{'finite-cylinder k-eff' if MODE == 'cylinder' else 'k-inf'} vs parameters (LHS, {len(results)} feasible samples, {PARTICLES} particles x {BATCHES-INACTIVE} active batches)", fontsize=10)
     fig.tight_layout(); fig.savefig(os.path.join(WORK_DIR, "keff_vs_params.png"), dpi=140); plt.show()
 
-cols = list(ALL_PARAMS) + ["fuel_vf", "coolant_vf", "graphite_to_fuel", "keff", "keff_std", "runtime_s", "status"]
+cols = list(PARAM_NAMES) + ["slot_width"] + list(OPTIONAL_PARAMS) + ["fuel_vf", "coolant_vf", "graphite_to_fuel", "keff", "keff_std", "runtime_s", "status"]
 summ = results[cols].copy()
 summ["keff_std_pcm"] = summ["keff_std"] * 1e5
-summ = summ[list(ALL_PARAMS) + ["fuel_vf", "coolant_vf", "graphite_to_fuel", "keff", "keff_std_pcm", "runtime_s", "status"]]
-fmt = {c: "{:.3f}" for c in PARAM_NAMES} | {"enrichment": "{:.3f}", "core_radius": "{:.1f}", "runtime_s": "{:.0f}", "fuel_vf": "{:.4f}", "coolant_vf": "{:.4f}", "graphite_to_fuel": "{:.2f}",
+summ = summ[list(PARAM_NAMES) + ["slot_width"] + list(OPTIONAL_PARAMS) + ["fuel_vf", "coolant_vf", "graphite_to_fuel", "keff", "keff_std_pcm", "runtime_s", "status"]]
+fmt = {c: "{:.3f}" for c in PARAM_NAMES + ("slot_width",)} | {"enrichment": "{:.3f}", "core_radius": "{:.1f}", "runtime_s": "{:.0f}", "fuel_vf": "{:.4f}", "coolant_vf": "{:.4f}", "graphite_to_fuel": "{:.2f}",
                                           "keff": "{:.5f}", "keff_std_pcm": "{:.0f}"}
 tbl = summ.copy()
 for c, f in fmt.items():
@@ -402,7 +410,7 @@ for c, f in fmt.items():
 md_path = os.path.join(WORK_DIR, "lhs_summary.md")
 with open(md_path, "w") as fh:
     fh.write(f"# LHS summary ({len(results)} feasible of {len(samples)} samples, seed {LHS_SEED})\n\n")
-    fh.write(f"Lengths in cm. round_location={GEOM_OPTS['round_location']}, n_slot_pairs={GEOM_OPTS['n_slot_pairs']}, "
+    fh.write(f"Lengths in cm; slot_width = 2*slot_depth + flat_width. round_location={GEOM_OPTS['round_location']}, stacking={GEOM_OPTS['stacking']}, "
              f"mode={MODE}, R={CORE_RADIUS} cm (H=2R) unless varied, reflector={REFLECTOR_THICKNESS} cm, "
              f"enrichment {ENRICHMENT} wt% U-235 unless varied, T = {TEMPERATURE_K} K, "
              f"{PARTICLES} particles x {BATCHES} batches ({INACTIVE} inactive), library: {openmc.config.get('cross_sections') if HAVE_XS else 'none'}\n\n")
@@ -424,7 +432,7 @@ md('''## Notes / next steps
 * Raise `PARTICLES`/`BATCHES` (e.g. 20 000 × 150) and `N_SAMPLES` for real studies; each unit-cell run is independent → trivially parallel.
 * Useful extra outputs to add per sample: fuel/coolant temperature coefficients (re-run at ±ΔT), conversion ratio (tally U-238 capture / U-235 absorption), spectrum.
 * `mode="unit_cell"` gives the quick periodic k-inf model; `reflector_thickness` adds graphite around the cylinder.
-* To use different fuel/coolant slot sizes, split `slot_width`/`slot_depth` in `resolve_params()`/`build_unit_universe()` — the profile builder already takes them per slot.
+* All slots are identical by design (Brian); the profile builder takes width/depth per call if that ever needs to change.
 ''')
 
 nb = nbf.v4.new_notebook(); nb.cells = cells

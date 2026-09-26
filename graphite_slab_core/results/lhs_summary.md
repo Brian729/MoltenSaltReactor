@@ -1,16 +1,19 @@
-# LHS summary (9 feasible of 12 samples, seed 2026)
+# LHS summary (12 feasible of 12 samples, seed 2026)
 
-Lengths in cm. round_location=side, n_slot_pairs=2, mode=cylinder, R=70.0 cm (H=2R) unless varied, reflector=0.0 cm, enrichment 33.477 wt% U-235 unless varied, T = 922.0 K, 10000 particles x 100 batches (40 inactive), library: /workspace/nucdata/endfb-viii.0-hdf5/cross_sections.xml
+Lengths in cm; slot_width = 2*slot_depth + flat_width. round_location=both_sides, stacking=plates, mode=cylinder, R=70.0 cm (H=2R) unless varied, reflector=0.0 cm, enrichment 33.477 wt% U-235 unless varied, T = 922.0 K, 10000 particles x 100 batches (40 inactive), library: /workspace/nucdata/endfb-viii.0-hdf5/cross_sections.xml
 
-| sample | slot_width | slot_depth | web_thickness | wall_thickness | enrichment | core_radius | fuel_vf | coolant_vf | graphite_to_fuel | keff | keff_std_pcm | runtime_s | status |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 1.154 | 1.015 | 1.937 | 2.672 | 33.477 | 70.0 | 0.0490 | 0.0490 | 18.40 | - | - | - | built |
-| 3 | 1.770 | 1.534 | 1.807 | 1.076 | 33.477 | 70.0 | 0.0978 | 0.0978 | 8.22 | - | - | - | built |
-| 4 | 2.235 | 1.625 | 0.800 | 2.411 | 33.477 | 70.0 | 0.1786 | 0.1786 | 3.60 | - | - | - | built |
-| 5 | 1.521 | 1.487 | 1.361 | 1.669 | 33.477 | 70.0 | 0.1060 | 0.1060 | 7.44 | - | - | - | built |
-| 7 | 2.005 | 1.181 | 1.639 | 1.436 | 33.477 | 70.0 | 0.1025 | 0.1025 | 7.76 | - | - | - | built |
-| 8 | 2.325 | 0.993 | 1.758 | 1.239 | 33.477 | 70.0 | 0.0980 | 0.0980 | 8.21 | - | - | - | built |
-| 9 | 2.383 | 1.316 | 1.447 | 2.142 | 33.477 | 70.0 | 0.1228 | 0.1228 | 6.14 | - | - | - | built |
-| 10 | 1.994 | 1.269 | 0.948 | 2.635 | 33.477 | 70.0 | 0.1407 | 0.1407 | 5.11 | - | - | - | built |
-| 11 | 1.667 | 0.872 | 1.011 | 2.899 | 33.477 | 70.0 | 0.1023 | 0.1023 | 7.78 | - | - | - | built |
+| sample | slot_depth | flat_width | web_thickness | wall_thickness | slot_width | enrichment | core_radius | fuel_vf | coolant_vf | graphite_to_fuel | keff | keff_std_pcm | runtime_s | status |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | 1.162 | 1.372 | 1.207 | 0.847 | 3.696 | 33.477 | 70.0 | 0.1886 | 0.1886 | 3.30 | - | - | - | built |
+| 1 | 0.923 | 0.268 | 1.937 | 1.303 | 2.115 | 33.477 | 70.0 | 0.0879 | 0.0879 | 9.37 | - | - | - | built |
+| 2 | 0.880 | 1.212 | 1.544 | 1.051 | 2.971 | 33.477 | 70.0 | 0.1309 | 0.1309 | 5.64 | - | - | - | built |
+| 3 | 1.416 | 0.917 | 1.807 | 0.346 | 3.750 | 33.477 | 70.0 | 0.2273 | 0.2273 | 2.40 | - | - | - | built |
+| 4 | 1.788 | 1.031 | 0.800 | 1.146 | 4.608 | 33.477 | 70.0 | 0.2164 | 0.2164 | 2.62 | - | - | - | built |
+| 5 | 1.217 | 0.858 | 1.361 | 0.702 | 3.292 | 33.477 | 70.0 | 0.1888 | 0.1888 | 3.30 | - | - | - | built |
+| 6 | 1.064 | 1.475 | 1.188 | 0.642 | 3.602 | 33.477 | 70.0 | 0.2047 | 0.2047 | 2.88 | - | - | - | built |
+| 7 | 1.604 | 0.476 | 1.639 | 0.562 | 3.684 | 33.477 | 70.0 | 0.2084 | 0.2084 | 2.80 | - | - | - | built |
+| 8 | 1.860 | 0.241 | 1.758 | 0.443 | 3.961 | 33.477 | 70.0 | 0.2233 | 0.2233 | 2.48 | - | - | - | built |
+| 9 | 1.906 | 0.645 | 1.447 | 0.985 | 4.457 | 33.477 | 70.0 | 0.2031 | 0.2031 | 2.92 | - | - | - | built |
+| 10 | 1.596 | 0.586 | 0.948 | 1.281 | 3.777 | 33.477 | 70.0 | 0.1815 | 0.1815 | 3.51 | - | - | - | built |
+| 11 | 1.334 | 0.090 | 1.011 | 1.440 | 2.757 | 33.477 | 70.0 | 0.1394 | 0.1394 | 5.17 | - | - | - | built |
 

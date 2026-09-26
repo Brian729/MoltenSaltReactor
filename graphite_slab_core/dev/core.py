@@ -5,20 +5,34 @@ import numpy as np
 import openmc
 
 # ============================================================================
-# 1. Shared milled-slot profile (used for BOTH fuel and coolant slots)
+# 1. Shared machined-slot profile (used for BOTH fuel and coolant slots)
 # ============================================================================
 #   local 2-D coords of the slot cross-section:
 #     u = across the slot width (0 .. w),  v = depth measured from the mouth (0 .. d)
 #   round_location:
-#     "side"   : (default) one lateral side wall is a quarter-round of radius R = d
-#                whose centre lies on the MOUTH plane at u = w-d  ->  slot is w wide at
-#                the mouth, (w-d) wide at the flat bottom.  Needs w >= d.
-#     "bottom" : flat parallel sides, bottom is an arc of radius R = d centred on the
-#                mouth plane at mid-width (U / ball-nose groove). Needs w <= 2d.
-#     "none"   : plain rectangle w x d (reference case, no radius).
-#   round_side: "+" -> rounded wall is at the high-u side, "-" -> low-u side.
+#     "both_sides" : (DEFAULT) both lateral side walls are quarter-rounds of radius R = d, centred on
+#                    the MOUTH plane at u = d and u = w-d, with a flat bottom of width `flat` between
+#                    them  ->  w = 2d + flat  (flat >= 0; flat = 0 gives a half-round).
+#     "side"       : (legacy) only one side wall is a quarter-round R = d  ->  w = d + flat.
+#     "bottom"     : (legacy) flat parallel sides, arc bottom R = d centred at mid-width on the mouth
+#                    plane (U-groove); needs an explicit slot_width <= 2d.
+#     "none"       : (legacy) plain rectangle, w = flat.
+#   round_side ("side" only): "+" -> rounded wall at the high-u side, "-" -> low-u side.
+PROFILES = ("both_sides", "side", "bottom", "none")
 
-def profile_area(w, d, round_location="side"):
+def slot_width_from(d, flat, round_location="both_sides"):
+    """Total slot width at the mouth from depth and flat-bottom width."""
+    if round_location == "both_sides":
+        return 2.0 * d + flat
+    if round_location == "side":
+        return d + flat
+    if round_location == "none":
+        return flat
+    raise ValueError("round_location='bottom' has no flat bottom: give slot_width explicitly")
+
+def profile_area(w, d, round_location="both_sides"):
+    if round_location == "both_sides":
+        return (w - 2 * d) * d + math.pi * d**2 / 2.0
     if round_location == "side":
         return (w - d) * d + math.pi * d**2 / 4.0
     if round_location == "bottom":
@@ -28,8 +42,10 @@ def profile_area(w, d, round_location="side"):
         return w * d
     raise ValueError(round_location)
 
-def profile_perimeter(w, d, round_location="side"):
+def profile_perimeter(w, d, round_location="both_sides"):
     """Full wetted perimeter (mouth included: the mouth is closed by graphite too)."""
+    if round_location == "both_sides":
+        return w + (w - 2 * d) + math.pi * d
     if round_location == "side":
         return w + (w - d) + d + math.pi * d / 2.0
     if round_location == "bottom":
@@ -39,22 +55,32 @@ def profile_perimeter(w, d, round_location="side"):
         return 2.0 * (w + d)
     raise ValueError(round_location)
 
-def profile_feasible(w, d, round_location="side"):
+def profile_feasible(w, d, round_location="both_sides"):
+    tol = 1e-9
+    if round_location not in PROFILES:
+        return False, f"round_location must be one of {PROFILES}"
     if w <= 0 or d <= 0:
-        return False, "slot_width and slot_depth must be > 0"
-    if round_location == "side" and w < d:
+        return False, "slot width and slot_depth must be > 0"
+    if round_location == "both_sides" and w < 2 * d - tol:
+        return False, f"round_location='both_sides' needs slot_width >= 2*slot_depth (w={w:.3g} < 2d={2*d:.3g})"
+    if round_location == "side" and w < d - tol:
         return False, f"round_location='side' needs slot_width >= slot_depth (w={w:.3g} < d={d:.3g})"
-    if round_location == "bottom" and w > 2 * d:
+    if round_location == "bottom" and w > 2 * d + tol:
         return False, f"round_location='bottom' needs slot_width <= 2*slot_depth (w={w:.3g} > 2d={2*d:.3g})"
     return True, ""
 
-def profile_outline(w, d, round_location="side", round_side="+", n=60):
+def profile_outline(w, d, round_location="both_sides", round_side="+", n=60):
     """Closed (u, v) polyline of the profile - for sketches only."""
     if round_location == "none":
         pts = [(0, 0), (w, 0), (w, d), (0, d)]
+    elif round_location == "both_sides":
+        th = np.linspace(0, np.pi / 2, n)
+        right = [(w - d + d * np.cos(t), d * np.sin(t)) for t in th]          # (w,0) -> (w-d,d)
+        left = [(d - d * np.sin(t), d * np.cos(t)) for t in th]               # (d,d) -> (0,0)
+        pts = [(0, 0)] + right + left
     elif round_location == "side":
         th = np.linspace(0, np.pi / 2, n)
-        arc = [(w - d + d * np.cos(t), d * np.sin(t)) for t in th]   # (w,0) -> (w-d,d)
+        arc = [(w - d + d * np.cos(t), d * np.sin(t)) for t in th]            # (w,0) -> (w-d,d)
         pts = [(0, 0)] + arc + [(0, d)]
     else:  # bottom
         a = w / 2; h = math.sqrt(d**2 - a**2); t0 = math.asin(a / d)
@@ -62,7 +88,7 @@ def profile_outline(w, d, round_location="side", round_side="+", n=60):
         arc = [(a + d * np.sin(t), d * np.cos(t)) for t in th]
         pts = [(0, 0)] + [(0, h)] + arc + [(w, h), (w, 0)]
     pts = np.array(pts, float)
-    if round_side == "-":
+    if round_side == "-" and round_location == "side":
         pts[:, 0] = w - pts[:, 0]
     return np.vstack([pts, pts[:1]])
 
@@ -74,8 +100,8 @@ def _cylinder(axis, depth_axis, width_axis, c_depth, c_width, r):
     return {"x": openmc.XCylinder, "y": openmc.YCylinder, "z": openmc.ZCylinder}[axis](**kw)
 
 def milled_slot_region(run_axis, depth_axis, width_axis, mouth, u0, w, d,
-                       round_location="side", round_side="+", depth_sign=+1):
-    """CSG region of ONE milled slot (infinite along run_axis).
+                       round_location="both_sides", round_side="+", depth_sign=+1):
+    """CSG region of ONE machined slot (infinite along run_axis).
 
     mouth      : coordinate of the open face along depth_axis
     depth_sign : +1 -> slot goes from `mouth` towards +depth_axis
@@ -90,22 +116,30 @@ def milled_slot_region(run_axis, depth_axis, width_axis, mouth, u0, w, d,
     in_depth = (+m & -b) if depth_sign > 0 else (-m & +b)
     beyond_mouth = +m if depth_sign > 0 else -m        # half-space on the graphite side of the mouth
     lo, hi = u0, u0 + w
+    cyl = lambda uc: _cylinder(run_axis, depth_axis, width_axis, mouth, uc, d)
     if round_location == "none":
         return in_depth & +P_w(lo) & -P_w(hi)
+    if round_location == "both_sides":
+        # [left quarter-disc] U [flat-bottom rectangle] U [right quarter-disc]; arc centres on the mouth plane
+        pl, pr = P_w(lo + d), P_w(hi - d)
+        left = -cyl(lo + d) & beyond_mouth & -pl
+        right = -cyl(hi - d) & beyond_mouth & +pr
+        if w - 2 * d > 1e-9:
+            return left | (in_depth & +pl & -pr) | right
+        return left | right                          # flat = 0: half-round
     if round_location == "side":
         if round_side == "+":
             uc = hi - d                     # arc centre (on mouth plane)
             rect = in_depth & +P_w(lo) & -P_w(uc)
-            quarter = -_cylinder(run_axis, depth_axis, width_axis, mouth, uc, d) & beyond_mouth & +P_w(uc)
+            quarter = -cyl(uc) & beyond_mouth & +P_w(uc)
         else:
             uc = lo + d
             rect = in_depth & +P_w(uc) & -P_w(hi)
-            quarter = -_cylinder(run_axis, depth_axis, width_axis, mouth, uc, d) & beyond_mouth & -P_w(uc)
+            quarter = -cyl(uc) & beyond_mouth & -P_w(uc)
         return rect | quarter
     if round_location == "bottom":
         uc = 0.5 * (lo + hi)
-        return (beyond_mouth & +P_w(lo) & -P_w(hi) &
-                -_cylinder(run_axis, depth_axis, width_axis, mouth, uc, d))
+        return beyond_mouth & +P_w(lo) & -P_w(hi) & -cyl(uc)
     raise ValueError(round_location)
 
 # ============================================================================
@@ -210,52 +244,89 @@ def make_materials(fuel=None, coolant=None, graphite=None, temperature=922.0, en
 # ============================================================================
 # 3. Layer stack / unit-cell dimensions (pure python - no OpenMC objects)
 # ============================================================================
-def resolve_params(slot_width=2.0, slot_depth=1.5, web_thickness=1.5, wall_thickness=2.0, *,
-                   n_slot_pairs=2, round_location="side",
-                   fuel_round_side="+", coolant_round_side="+", inplane_web=None, **_ignored):
+STACKINGS = ("plates", "interleaved")
+
+def resolve_params(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thickness=0.5, *,
+                   round_location="both_sides", slot_width=None, stacking="plates", n_slot_pairs=2,
+                   round_side="+", **_ignored):
     """Validate the parameters and return the unit-cell layout.
 
-    Layers are stacked along x (slab-thickness / stacking direction).  Each entry of
-    `layers` is (kind, thickness) with kind in {'F','C','web','wall'}.
-    'F' layer = fuel-slot row (thickness = slot_depth); its slots run along z, width along y.
-    'C' layer = coolant-slot row (thickness = slot_depth); its slots run along y, width along z.
+    Primary parameters: slot_depth d, flat_width (flat bottom between the two radii), web_thickness,
+    wall_thickness.  Derived: slot_width w = 2d + flat (round_location='both_sides').  All slots
+    (fuel and coolant) have the same size and profile; ONE web thickness is used everywhere.
+
+    stacking="plates" (default, Brian's design): each graphite plate has one row of slots machined into
+        one face (depth d) and a solid backing (wall_thickness).  Plates are stacked along x, every other
+        plate rotated 90 deg, so fuel rows (slots along z) and coolant rows (slots along y) alternate and
+        each row is closed by the backing of the next plate -> ONE shared wall between every fuel row and
+        coolant row.  Layers along x: F | wall | C | wall.  The web is the land between neighbouring slots
+        of a row (in-row).
+    stacking="interleaved" (legacy): a slab holds n_slot_pairs x (F, web, C) rows separated by webs,
+        slabs separated by one wall: F web C [web F web C]*(n-1) wall.
+
+    `layers` entries are (kind, thickness), kind in {'F','C','web','wall'}; F/C layers are d thick.
     """
-    w, d, t_web, t_wall = map(float, (slot_width, slot_depth, web_thickness, wall_thickness))
+    d, t_web, t_wall = map(float, (slot_depth, web_thickness, wall_thickness))
     errs = []
-    for k, v in dict(slot_width=w, slot_depth=d, web_thickness=t_web, wall_thickness=t_wall).items():
+    for k, v in dict(slot_depth=d, web_thickness=t_web, wall_thickness=t_wall).items():
         if not (v > 0 and math.isfinite(v)):
             errs.append(f"{k} must be a positive finite number (got {v})")
-    if int(n_slot_pairs) != n_slot_pairs or n_slot_pairs < 1:
+    if round_location not in PROFILES:
+        errs.append(f"round_location must be one of {PROFILES}")
+    if stacking not in STACKINGS:
+        errs.append(f"stacking must be one of {STACKINGS}")
+    if stacking == "interleaved" and (int(n_slot_pairs) != n_slot_pairs or n_slot_pairs < 1):
         errs.append("n_slot_pairs must be an integer >= 1")
-    for s in (fuel_round_side, coolant_round_side):
-        if s not in "+-" or len(s) != 1:
-            errs.append("round sides must be '+' or '-'")
+    if round_side not in ("+", "-"):
+        errs.append("round_side must be '+' or '-'")
+    w = None
+    if not errs:
+        if slot_width is not None:
+            w = float(slot_width)
+        elif round_location == "bottom":
+            errs.append("round_location='bottom' needs an explicit slot_width")
+        else:
+            f = float(flat_width)
+            if not (f >= 0 and math.isfinite(f)):
+                errs.append(f"flat_width must be >= 0 (got {flat_width})")
+            else:
+                w = slot_width_from(d, f, round_location)
     if not errs:
         ok, msg = profile_feasible(w, d, round_location)
         if not ok:
             errs.append(msg)
-    web_ip = t_web if inplane_web is None else float(inplane_web)
-    if web_ip <= 0:
-        errs.append("inplane_web must be > 0")
     if errs:
         raise ValueError("; ".join(errs))
+    flat = {"both_sides": w - 2 * d, "side": w - d, "none": w, "bottom": 0.0}[round_location]
 
-    # one slab = F web C [web F web C]*(n-1); neighbouring slabs separated by ONE wall
-    layers = [("F", d), ("web", t_web), ("C", d)]
-    for _ in range(int(n_slot_pairs) - 1):
-        layers += [("web", t_web), ("F", d), ("web", t_web), ("C", d)]
-    layers += [("wall", t_wall)]
-    return dict(slot_width=w, slot_depth=d, web_thickness=t_web, wall_thickness=t_wall,
-                n_slot_pairs=int(n_slot_pairs), round_location=round_location,
-                fuel_round_side=fuel_round_side, coolant_round_side=coolant_round_side,
-                inplane_web=web_ip, layers=layers,
-                pitch_x=sum(t for _, t in layers), pitch_y=w + web_ip, pitch_z=w + web_ip)
+    if stacking == "plates":
+        layers = [("F", d), ("wall", t_wall), ("C", d), ("wall", t_wall)]
+    else:
+        layers = [("F", d), ("web", t_web), ("C", d)]
+        for _ in range(int(n_slot_pairs) - 1):
+            layers += [("web", t_web), ("F", d), ("web", t_web), ("C", d)]
+        layers += [("wall", t_wall)]
+    return dict(slot_depth=d, flat_width=flat, slot_width=w, web_thickness=t_web, wall_thickness=t_wall,
+                round_location=round_location, round_side=round_side, stacking=stacking,
+                n_slot_pairs=int(n_slot_pairs) if stacking == "interleaved" else None, layers=layers,
+                pitch_x=sum(t for _, t in layers), pitch_y=w + t_web, pitch_z=w + t_web)
 
 def is_feasible(**kw):
     try:
         resolve_params(**kw); return True, ""
     except ValueError as e:
         return False, str(e)
+
+def layer_start(p, kind, which=0):
+    """x coordinate (unit cell centred on 0) where the `which`-th layer of `kind` starts (= slot mouth)."""
+    x, n = -p["pitch_x"] / 2.0, 0
+    for k, t in p["layers"]:
+        if k == kind:
+            if n == which:
+                return x
+            n += 1
+        x += t
+    raise ValueError(kind)
 
 def analytic_metrics(core_radius=None, **kw):
     """Volume fractions etc. of the infinite periodic unit cell (exact, no transport).
@@ -269,12 +340,12 @@ def analytic_metrics(core_radius=None, **kw):
     Vf = nF * A * Pz            # fuel slots run along z
     Vc = nC * A * Py            # coolant slots run along y
     Vg = V - Vf - Vc
-    return dict(pitch_x=Px, pitch_y=Py, pitch_z=Pz, slot_area=A, slot_perimeter=Pm,
+    return dict(slot_width=w, pitch_x=Px, pitch_y=Py, pitch_z=Pz, slot_area=A, slot_perimeter=Pm,
                 fuel_vf=Vf / V, coolant_vf=Vc / V, graphite_vf=Vg / V,
                 graphite_to_fuel=Vg / Vf, coolant_to_fuel=Vc / Vf,
                 fuel_hydraulic_diam=4 * A / Pm,
                 fuel_wetted_area_per_fuel_vol=Pm / A,      # cm^2 / cm^3 (same for coolant)
-                slab_thickness=Px - p["wall_thickness"],
+                plate_thickness=(d + p["wall_thickness"]) if p["stacking"] == "plates" else Px - p["wall_thickness"],
                 **({} if core_radius is None else dict(
                     core_volume_l=2 * math.pi * core_radius**3 / 1000.0,
                     core_fuel_volume_l=Vf / V * 2 * math.pi * core_radius**3 / 1000.0,
@@ -286,21 +357,20 @@ def analytic_metrics(core_radius=None, **kw):
 def build_unit_universe(p, mats):
     """Universe of one unit cell, centred on the origin, with UNBOUNDED cells so it can be
     used both as a periodic unit cell and as a lattice element."""
-    w, d, loc = p["slot_width"], p["slot_depth"], p["round_location"]
+    w, d, loc, web = p["slot_width"], p["slot_depth"], p["round_location"], p["web_thickness"]
     Px, Py, Pz = p["pitch_x"], p["pitch_y"], p["pitch_z"]
-    web_ip = p["inplane_web"]
     x = -Px / 2.0
     cells, slots = [], []
     for i, (kind, t) in enumerate(p["layers"]):
         if kind == "F":
             # vertical fuel slot: runs along z, width along y, mouth at the layer's -x face
-            r = milled_slot_region("z", "x", "y", mouth=x, u0=-Py / 2 + web_ip / 2, w=w, d=d,
-                                   round_location=loc, round_side=p["fuel_round_side"])
+            r = milled_slot_region("z", "x", "y", mouth=x, u0=-Py / 2 + web / 2, w=w, d=d,
+                                   round_location=loc, round_side=p["round_side"])
             c = openmc.Cell(name=f"fuel slot (layer {i})", fill=mats["fuel"], region=r)
         elif kind == "C":
             # horizontal coolant slot: runs along y, width along z, mouth at the layer's -x face
-            r = milled_slot_region("y", "x", "z", mouth=x, u0=-Pz / 2 + web_ip / 2, w=w, d=d,
-                                   round_location=loc, round_side=p["coolant_round_side"])
+            r = milled_slot_region("y", "x", "z", mouth=x, u0=-Pz / 2 + web / 2, w=w, d=d,
+                                   round_location=loc, round_side=p["round_side"])
             c = openmc.Cell(name=f"coolant slot (layer {i})", fill=mats["coolant"], region=r)
         else:
             c = None
@@ -318,24 +388,24 @@ def _box(Lx, Ly, Lz, bc="transmission", center=(0, 0, 0)):
          openmc.ZPlane(cz - Lz / 2, boundary_type=bc), openmc.ZPlane(cz + Lz / 2, boundary_type=bc)]
     return s, (+s[0] & -s[1] & +s[2] & -s[3] & +s[4] & -s[5])
 
-def build_model(slot_width=2.0, slot_depth=1.5, web_thickness=1.5, wall_thickness=2.0, *,
-                n_slot_pairs=2, round_location="side",
-                fuel_round_side="+", coolant_round_side="+", inplane_web=None,
+def build_model(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thickness=0.5, *,
+                round_location="both_sides", slot_width=None, stacking="plates", n_slot_pairs=2, round_side="+",
                 mode="cylinder", core_radius=70.0, reflector_thickness=0.0,
                 enrichment=None, fuel=None, coolant=None, graphite=None, temperature=922.0,
-                particles=10000, batches=100, inactive=30, seed=1):
-    """Return an openmc.Model of the slotted-graphite-slab core.
+                particles=10000, batches=100, inactive=40, seed=1):
+    """Return an openmc.Model of the slotted-graphite-plate core.
 
-    mode="cylinder"  : (default) the slab stack (RectLattice of unit cells) fills a right cylinder of radius
-                       R = core_radius and height H = 2R (z in [-R, R]); optional graphite reflector of
-                       `reflector_thickness` on the side, top and bottom; vacuum outside  -> finite k-eff.
+    Geometry parameters (cm): slot_depth d, flat_width (slot width w = 2d + flat_width), web_thickness,
+    wall_thickness (shared plate backing between fuel and coolant rows).  See resolve_params().
+    mode="cylinder"  : (default) the plate stack (RectLattice of unit cells) fills a right cylinder of radius
+                       R = core_radius and height H = 2R (z in [-R, R]); bare by default (reflector_thickness=0);
+                       vacuum outside  -> finite k-eff.
     mode="unit_cell" : one unit cell with PERIODIC boundaries on all six faces -> k-infinity (quick mode).
     enrichment       : U-235 wt% of total uranium in the fuel salt (None -> MSRE 33.477 wt%).
     """
-    p = resolve_params(slot_width, slot_depth, web_thickness, wall_thickness,
-                       n_slot_pairs=n_slot_pairs, round_location=round_location,
-                       fuel_round_side=fuel_round_side, coolant_round_side=coolant_round_side,
-                       inplane_web=inplane_web)
+    p = resolve_params(slot_depth, flat_width, web_thickness, wall_thickness,
+                       round_location=round_location, slot_width=slot_width, stacking=stacking,
+                       n_slot_pairs=n_slot_pairs, round_side=round_side)
     if mode not in ("cylinder", "unit_cell"):
         raise ValueError("mode must be 'cylinder' or 'unit_cell'")
     mats = make_materials(fuel, coolant, graphite, temperature, enrichment)

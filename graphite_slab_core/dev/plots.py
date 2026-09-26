@@ -75,41 +75,51 @@ def csg_volume_check(model, n=20000, seed=0):
         counts[ids[cell.fill.id]] += 1
     return {f"{k}_vf": (c / n, math.sqrt(c / n * (1 - c / n) / n)) for k, c in counts.items()}
 
-def sketch_profiles(w=2.0, d=1.5, round_side="+", filename=None):
-    """Annotated cross-sections of the shared milled-slot profile for each round_location."""
-    locs = [("side", "DEFAULT  round_location='side'\n(one side wall = quarter-round R=d)"),
-            ("bottom", "ALT  round_location='bottom'\n(U-groove, arc bottom R=d, needs w<=2d)"),
-            ("none", "REF  round_location='none'\n(square slot)")]
-    fig, axs = plt.subplots(1, 3, figsize=(13, 3.8))
-    for ax, (loc, ttl) in zip(axs, locs):
-        ok, msg = profile_feasible(w, d, loc)
-        ax.add_patch(plt.Rectangle((-0.8, 0), w + 1.6, d + 0.8, color="0.75", zorder=0))
-        if ok:
-            o = profile_outline(w, d, loc, round_side)
-            ax.fill(o[:, 0], o[:, 1], color="#e67814", zorder=1)
-            ax.plot(o[:, 0], o[:, 1], "k", lw=1)
-            if loc != "none":
-                uc = (w - d if round_side == "+" else d) if loc == "side" else w / 2
-                ax.plot([uc], [0], "k+", ms=10)
-                ang = np.deg2rad(55) if round_side == "+" or loc == "bottom" else np.deg2rad(125)
-                if loc == "bottom": ang = np.deg2rad(90 + 20)
-                ax.annotate("", xy=(uc + d * np.cos(ang), d * np.sin(ang)), xytext=(uc, 0),
-                            arrowprops=dict(arrowstyle="->"))
-                ax.text(uc + 0.5 * d * np.cos(ang) + 0.05, 0.5 * d * np.sin(ang), "R = d", fontsize=9)
-        else:
-            ax.text(w / 2, d / 2, "infeasible:\n" + msg, ha="center", va="center", fontsize=8, wrap=True)
+def sketch_profiles(d=1.0, flat=0.5, filename=None):
+    """Annotated cross-sections of the shared machined-slot profile: the default double-rounded slot
+    (large panel) and the legacy options (small panels)."""
+    w = 2 * d + flat
+    fig = plt.figure(figsize=(14, 5.2))
+    gs = fig.add_gridspec(2, 4, width_ratios=[2.2, 2.2, 1, 1], height_ratios=[1, 1])
+    ax0 = fig.add_subplot(gs[:, :2])
+    small = [fig.add_subplot(gs[0, 2]), fig.add_subplot(gs[0, 3]), fig.add_subplot(gs[1, 2]), fig.add_subplot(gs[1, 3])]
+
+    def draw(ax, loc, ww, title, big=False):
+        ax.add_patch(plt.Rectangle((-0.6, 0), ww + 1.2, d + 0.7, color="0.75", zorder=0))
+        o = profile_outline(ww, d, loc)
+        ax.fill(o[:, 0], o[:, 1], color="#e67814", zorder=1)
+        ax.plot(o[:, 0], o[:, 1], "k", lw=1)
         ax.axhline(0, color="k", lw=2.5)
-        ax.text(w / 2, -0.08, "mouth (open face, closed by neighbouring graphite)", ha="center", va="bottom", fontsize=8)
-        ax.annotate("", xy=(0, d + 0.35), xytext=(w, d + 0.35), arrowprops=dict(arrowstyle="<->"))
-        ax.text(w / 2, d + 0.42, "w = slot_width", ha="center", fontsize=8)
-        ax.annotate("", xy=(w + 0.45, 0), xytext=(w + 0.45, d), arrowprops=dict(arrowstyle="<->"))
-        ax.text(w + 0.5, d / 2, "d = slot_depth", rotation=90, va="center", fontsize=8)
-        ax.set_xlim(-0.8, w + 0.8); ax.set_ylim(d + 0.8, -0.6); ax.set_aspect("equal")
-        ax.set_xlabel("u  (across width: y for fuel slots, z for coolant slots) [cm]", fontsize=8)
-        ax.set_ylabel("v = depth from mouth (+x) [cm]", fontsize=8)
-        ax.set_title(ttl, fontsize=9)
-    fig.suptitle(f"Shared milled-slot profile, w={w} cm, d={d} cm, round_side='{round_side}' "
-                 "(fuel slot: extruded along z; coolant slot: extruded along y)", fontsize=10)
+        ax.set_xlim(-0.6, ww + 0.6); ax.set_ylim(d + 0.7, -0.55); ax.set_aspect("equal")
+        ax.set_title(title, fontsize=10 if big else 8)
+        if not big:
+            ax.set_xticks([]); ax.set_yticks([])
+
+    draw(ax0, "both_sides", w, f"DEFAULT  round_location='both_sides':  w = 2d + flat = {w:g} cm\n"
+         f"(d = {d:g} cm, flat = {flat:g} cm; both side walls are quarter-rounds R = d centred on the mouth plane)", big=True)
+    for uc, ang in [(d, 125), (w - d, 55)]:
+        ax0.plot([uc], [0], "k+", ms=12)
+        a = np.deg2rad(ang)
+        ax0.annotate("", xy=(uc + d * np.cos(a), d * np.sin(a)), xytext=(uc, 0), arrowprops=dict(arrowstyle="->"))
+        ax0.text(uc + 0.55 * d * np.cos(a), 0.5 * d * np.sin(a), "R = d", fontsize=9, ha="center",
+                 bbox=dict(fc="#e67814", ec="none", pad=0.5))
+    ax0.text(w / 2, -0.08, "mouth (open face, closed by the backing wall of the next plate)", ha="center", va="bottom", fontsize=8)
+    ax0.annotate("", xy=(0, -0.38), xytext=(w, -0.38), arrowprops=dict(arrowstyle="<->"))
+    ax0.text(w / 2, -0.42, "w = slot width (derived)", ha="center", va="bottom", fontsize=8)
+    if flat > 0:
+        ax0.annotate("", xy=(d, d + 0.2), xytext=(w - d, d + 0.2), arrowprops=dict(arrowstyle="<->"))
+        ax0.text(w / 2, d + 0.25, "flat_width", ha="center", va="top", fontsize=8)
+    ax0.annotate("", xy=(w + 0.35, 0), xytext=(w + 0.35, d), arrowprops=dict(arrowstyle="<->"))
+    ax0.text(w + 0.4, d / 2, "d = slot_depth", rotation=90, va="center", fontsize=8)
+    ax0.set_xlabel("u  (across width: y for fuel slots, z for coolant slots) [cm]", fontsize=8)
+    ax0.set_ylabel("v = depth from mouth (+x) [cm]", fontsize=8)
+
+    draw(small[0], "both_sides", 2 * d, "both_sides, flat = 0\n(half-round)")
+    draw(small[1], "side", d + flat + d / 2, "legacy 'side'\n(one side rounded)")
+    draw(small[2], "bottom", 2 * d * 0.9, "legacy 'bottom'\n(U-groove, w <= 2d)")
+    draw(small[3], "none", w, "legacy 'none'\n(square)")
+    fig.suptitle("Shared machined-slot profile (identical for fuel slots, extruded along z, and coolant slots, extruded along y)",
+                 fontsize=10)
     fig.tight_layout()
     if filename:
         fig.savefig(filename, dpi=150)

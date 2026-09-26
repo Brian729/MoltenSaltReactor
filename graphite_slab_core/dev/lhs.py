@@ -3,7 +3,8 @@ import numpy as np
 import pandas as pd
 from scipy.stats import qmc
 
-PARAM_NAMES = ("slot_width", "slot_depth", "web_thickness", "wall_thickness")   # geometry (cm)
+PARAM_NAMES = ("slot_depth", "flat_width", "web_thickness", "wall_thickness")   # sampled geometry (cm)
+# slot width is DERIVED: w = 2*slot_depth + flat_width (default round_location='both_sides')
 OPTIONAL_PARAMS = ("enrichment", "core_radius")   # U-235 wt% of U, cylinder radius R (cm): sampled only if in bounds
 ALL_PARAMS = PARAM_NAMES + OPTIONAL_PARAMS
 
@@ -27,7 +28,7 @@ def lhs_samples(bounds, n_samples, seed=None, fixed=None, geometry_opts=None, de
         raise ValueError(f"need bounds (or a fixed value) for {missing}")
     for k in free:
         lo, hi = bounds[k]
-        if not (0 < lo < hi):
+        if not ((0 <= lo < hi) if k == "flat_width" else (0 < lo < hi)):
             raise ValueError(f"bad bounds for {k}: {bounds[k]}")
     if "enrichment" in free and bounds["enrichment"][1] > 100:
         raise ValueError("enrichment is U-235 wt% of U: upper bound must be <= 100")
@@ -48,6 +49,8 @@ def lhs_samples(bounds, n_samples, seed=None, fixed=None, geometry_opts=None, de
             df[k] = defaults[k]
     df = df[list(ALL_PARAMS)]
     feas = [is_feasible(**{k: row[k] for k in PARAM_NAMES}, **geometry_opts) for row in df.to_dict("records")]
+    df.insert(2, "slot_width", [resolve_params(**{k: r[k] for k in PARAM_NAMES}, **geometry_opts)["slot_width"]
+                                if f else np.nan for r, (f, _) in zip(df.to_dict("records"), feas)])
     df["feasible"] = [f for f, _ in feas]
     df["reason"] = [r for _, r in feas]
     df.index.name = "sample"
@@ -86,7 +89,7 @@ def run_lhs(samples, work_dir, geometry_opts=None, run_opts=None, run_transport=
             if not keep_going:
                 raise
         rows.append(row)
-        print(f"sample {idx:3d}: " + ", ".join(f"{k}={geo[k]:.3f}" for k in PARAM_NAMES)
+        print(f"sample {idx:3d}: " + ", ".join(f"{k}={geo[k]:.3f}" for k in PARAM_NAMES) + f", w={row['slot_width']:.3f}"
               + f", enr={row['enrichment']:.2f}, R={rad:.1f} | fuel_vf={row['fuel_vf']:.3f} C/F={row['graphite_to_fuel']:.2f}"
               + (f" | k={row['keff']:.5f}+/-{row['keff_std']:.5f} ({row['runtime_s']:.0f}s)" if row['status'] == 'ran' else f" | {row['status']}"))
     return pd.DataFrame(rows).set_index("sample")
