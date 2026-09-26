@@ -1,0 +1,3 @@
+scan,variable,x_opt,k_opt,at_edge,graphite_to_fuel_at_opt
+"fuel depth (w_f = 1.0, web 1.5)",fuel_depth,0.46668492508955234,1.5527686298830954,False,12.076120464710527
+"web (d_f = 0.5, w_f = 1.0)",web_thickness,3.968116616956151,1.5966937627857942,False,26.5787289382198

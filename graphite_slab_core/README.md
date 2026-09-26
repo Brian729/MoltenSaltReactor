@@ -35,6 +35,27 @@ Slot depth scans (done with the original MSRE fuel; notebook section 9, `dev/dep
   - Shallower coolant slots raise both k-inf and k-eff (k-eff 0.890 at d_c = 0.6 vs 0.848 at 1.0).
   - Results: `results/coolant_depth_scan.csv`, plot: `figures/coolant_depth_scan.png`.
 
+Graphite reflector at R = 85 cm (H = 2R; the same thickness t radially and axially; notebook section 11, `dev/reflector_scan.py`):
+- k-eff by thickness (bare k-eff is 1.0300):
+
+  | t (cm) | k-eff |
+  |---|---|
+  | 10 | 1.1030 |
+  | 20 | 1.1640 |
+  | 30 | 1.2100 |
+  | 45 | 1.2563 |
+  | 60 | 1.2794 |
+
+- Marginal worth falls from 731 pcm/cm (first 10 cm) to 154 pcm/cm (45 to 60 cm).
+- With t = 30 cm the critical radius is 49.1 +/- 0.1 cm, compared with 81.5 cm bare.
+- `reflector_axial=` sets a different top/bottom thickness; by default it equals the radial thickness.
+
+Thin fuel slots with the width fixed at 1.0 cm (d_f <= 0.5, coolant slots at the default; notebook section 12, `dev/fuel_depth_w1_scan.py`):
+- Unit-cell k-inf peaks at d_f of about 0.47 cm (1.553, graphite/fuel about 12).
+- Bare R = 85 cm is critical for d_f >= 0.43 cm.
+- A web-thickness scan at d_f = 0.5 gives a broad k-inf maximum of about 1.597 near web 4 cm (graphite/fuel about 27).
+- Files: `results/fuel_depth_w1_scan.csv`, `results/fuel_w1_web_scan.csv`, plot `figures/fuel_depth_w1_scan.png`.
+
 Requires OpenMC (tested with 0.16.0 from conda-forge) and `OPENMC_CROSS_SECTIONS` pointing to an ENDF/B-VIII.0 HDF5 library that includes `c_Graphite`.
 
 Folders:

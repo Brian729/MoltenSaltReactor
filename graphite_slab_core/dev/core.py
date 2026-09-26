@@ -300,7 +300,7 @@ STACKINGS = ("plates", "interleaved")
 
 def resolve_params(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thickness=0.5, *,
                    round_location="both_sides", slot_width=None, stacking="plates", n_slot_pairs=2,
-                   round_side="+", coolant_depth=None, **_ignored):
+                   round_side="+", coolant_depth=None, coolant_flat_width=None, **_ignored):
     """Validate the parameters and return the unit-cell layout.
 
     Primary parameters: slot_depth d, flat_width (flat bottom between the two radii), web_thickness,
@@ -321,6 +321,8 @@ def resolve_params(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thick
         fuel slots repeat along y (P_y = w + web) and coolant slots along z (P_z = w_c + web), and the
         coolant layer is d_c thick (P_x = d + d_c + 2 wall for plates).  With coolant_depth=None everything
         is identical to the uniform-slot design.
+    coolant_flat_width (optional, default None = flat_width): separate flat width of the coolant slots
+        (w_c = 2 d_c + coolant_flat_width), e.g. to fix the FUEL width while keeping the default coolant slots.
 
     `layers` entries are (kind, thickness), kind in {'F','C','web','wall'}; F layers are d, C layers d_c thick.
     """
@@ -349,7 +351,11 @@ def resolve_params(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thick
             if not (f >= 0 and math.isfinite(f)):
                 errs.append(f"flat_width must be >= 0 (got {flat_width})")
             else:
-                w, wc = slot_width_from(d, f, round_location), slot_width_from(dc, f, round_location)
+                fc = f if coolant_flat_width is None else float(coolant_flat_width)
+                if not (fc >= 0 and math.isfinite(fc)):
+                    errs.append(f"coolant_flat_width must be >= 0 (got {coolant_flat_width})")
+                else:
+                    w, wc = slot_width_from(d, f, round_location), slot_width_from(dc, fc, round_location)
     if not errs:
         for ww, dd, lab in ((w, d, "fuel"), (wc, dc, "coolant")):
             ok, msg = profile_feasible(ww, dd, round_location)
@@ -455,7 +461,7 @@ def _box(Lx, Ly, Lz, bc="transmission", center=(0, 0, 0)):
 
 def build_model(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thickness=0.5, *,
                 round_location="both_sides", slot_width=None, stacking="plates", n_slot_pairs=2, round_side="+",
-                coolant_depth=None, mode="cylinder", core_radius=70.0, reflector_thickness=0.0,
+                coolant_depth=None, coolant_flat_width=None, mode="cylinder", core_radius=70.0, reflector_thickness=0.0, reflector_axial=None,
                 enrichment=None, uf4_mol_pct=None, fuel=None, coolant=None, graphite=None, temperature=922.0,
                 particles=10000, batches=100, inactive=40, seed=1):
     """Return an openmc.Model of the slotted-graphite-plate core.
@@ -467,11 +473,14 @@ def build_model(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thicknes
                        R = core_radius and height H = 2R (z in [-R, R]); bare by default (reflector_thickness=0);
                        vacuum outside  -> finite k-eff.
     mode="unit_cell" : one unit cell with PERIODIC boundaries on all six faces -> k-infinity (quick mode).
-    enrichment       : U-235 wt% of total uranium in the fuel salt (None -> MSRE 33.477 wt%).
+    reflector_thickness : graphite reflector thickness (cm) on the SIDE (radial); reflector_axial = thickness on top AND
+                       bottom (None -> same as radial).  Reflector = graphite (same material as the core graphite), vacuum outside.
+    enrichment       : U-235 wt% of total uranium in the fuel salt (None -> default fuel, HALEU 19.75 wt%).
     """
     p = resolve_params(slot_depth, flat_width, web_thickness, wall_thickness,
                        round_location=round_location, slot_width=slot_width, stacking=stacking,
-                       n_slot_pairs=n_slot_pairs, round_side=round_side, coolant_depth=coolant_depth)
+                       n_slot_pairs=n_slot_pairs, round_side=round_side, coolant_depth=coolant_depth,
+                       coolant_flat_width=coolant_flat_width)
     if mode not in ("cylinder", "unit_cell"):
         raise ValueError("mode must be 'cylinder' or 'unit_cell'")
     mats = make_materials(fuel, coolant, graphite, temperature, enrichment, uf4_mol_pct)
@@ -486,8 +495,9 @@ def build_model(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thicknes
                                           constraints={"fissionable": True})
     else:
         R, t = float(core_radius), float(reflector_thickness)
-        if not R > 0 or t < 0:
-            raise ValueError("core_radius must be > 0 and reflector_thickness >= 0")
+        ta = t if reflector_axial is None else float(reflector_axial)
+        if not R > 0 or t < 0 or ta < 0:
+            raise ValueError("core_radius must be > 0 and reflector thicknesses >= 0")
         if R < 2 * max(Px, Py, Pz):
             raise ValueError(f"core_radius {R} too small for the unit-cell pitch ({Px:.2f} x {Py:.2f} x {Pz:.2f} cm)")
         # lattice just large enough to cover the cylinder; an odd count centres a unit cell on the axis
@@ -500,16 +510,19 @@ def build_model(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thicknes
         cyl = openmc.ZCylinder(r=R); zlo = openmc.ZPlane(-R); zhi = openmc.ZPlane(R)
         core = -cyl & +zlo & -zhi
         cells = [openmc.Cell(name="slab-stack core", fill=lat, region=core)]
-        if t > 0:
-            cyl_o = openmc.ZCylinder(r=R + t, boundary_type="vacuum")
-            zlo_o = openmc.ZPlane(-R - t, boundary_type="vacuum"); zhi_o = openmc.ZPlane(R + t, boundary_type="vacuum")
+        if t > 0 or ta > 0:
+            # outer surfaces; where a thickness is 0 the core surface itself is the vacuum boundary
+            cyl_o = openmc.ZCylinder(r=R + t) if t > 0 else cyl
+            zlo_o, zhi_o = (openmc.ZPlane(-R - ta), openmc.ZPlane(R + ta)) if ta > 0 else (zlo, zhi)
+            for srf in (cyl_o, zlo_o, zhi_o):
+                srf.boundary_type = "vacuum"
             cells.append(openmc.Cell(name="graphite reflector", fill=mats["graphite"],
                                      region=-cyl_o & +zlo_o & -zhi_o & ~core))
         else:
             for srf in (cyl, zlo, zhi):
                 srf.boundary_type = "vacuum"
         root = openmc.Universe(cells=cells)
-        p.update(core_radius=R, core_height=2 * R, reflector_thickness=t, lattice_shape=tuple(n))
+        p.update(core_radius=R, core_height=2 * R, reflector_thickness=t, reflector_axial=ta, lattice_shape=tuple(n))
         source = openmc.IndependentSource(
             space=openmc.stats.CylindricalIndependent(r=openmc.stats.PowerLaw(0.0, R, 1.0),
                                                       phi=openmc.stats.Uniform(0.0, 2 * math.pi),
@@ -523,6 +536,7 @@ def build_model(slot_depth=1.0, flat_width=0.5, web_thickness=1.5, wall_thicknes
     settings.seed = int(seed)
     settings.temperature = {"method": "nearest", "tolerance": 150.0, "default": temperature}
     settings.source = source
+    settings.source_rejection_fraction = 0.001   # thin fuel slots: fuel can be < 5 % of the volume (initial source only)
     settings.output = {"tallies": False}
     model = openmc.Model(geometry=geometry, materials=openmc.Materials(mats.values()), settings=settings)
     model.params = {**p, "mode": mode}   # handy for bookkeeping

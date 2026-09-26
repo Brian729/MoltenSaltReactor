@@ -81,7 +81,8 @@ therefore **one shared wall** between each fuel row and the adjacent coolant row
 **Core and materials:**
 * **Default model = bare finite cylindrical core** (`mode="cylinder"`, `reflector_thickness = 0`): a `RectLattice` of the unit-cell
   universe (odd count per axis, a unit cell centred on the axis) truncated by a `ZCylinder` of radius `R = core_radius`
-  (default **70 cm**, ~MSRE core radius) and z-planes at ±R (**H = 2R = D**), vacuum boundary. No plenums, vessel, downcomer
+  (default **70 cm**, ~MSRE core radius) and z-planes at ±R (**H = 2R = D**), vacuum boundary. Optional graphite reflector:
+  `reflector_thickness` (radial) and `reflector_axial` (top and bottom; default = radial) — see §11. No plenums, vessel, downcomer
   or headers — **the fuel salt outside the core is not modelled**. `mode="unit_cell"` = periodic unit cell → k-infinity (quick mode).
 * Materials at 922 K (MSRE operating temperature): **fuel = MSRE carrier salt with 4.0 mol% UF₄** (extra UF₄ taken from LiF),
   7LiF-BeF₂-ZrF₄-UF₄ **61.83-29.17-5.0-4.0 mol%** (variable `UF4_MOLPCT`), **HALEU 19.75 wt% U-235** (variable `ENRICHMENT`),
@@ -119,7 +120,7 @@ PARTICLES, BATCHES, INACTIVE = 10000, 100, 40   # finite core: 600k active histo
 # ---- core --------------------------------------------------------------------------------------------------
 MODE = "cylinder"          # "cylinder" (finite core, H = 2R, vacuum boundary) or "unit_cell" (periodic, k-inf)
 CORE_RADIUS = 70.0         # cm; H = 2R = 140 cm.  (MSRE graphite core radius was 70.2 cm - IRPhEP benchmark)
-REFLECTOR_THICKNESS = 0.0  # cm of graphite around the cylinder (side, top, bottom); 0 = bare core
+REFLECTOR_THICKNESS = 0.0  # cm of graphite around the cylinder (side; top/bottom too unless reflector_axial= is given); 0 = bare
 THREADS = None             # None = all OpenMP threads
 
 # ---- default geometry (cm) --------------------------------------------------------------------------------
@@ -689,6 +690,218 @@ if os.path.exists(os.path.join(WORK_DIR, "results", "haleu_R_scan.csv")):
 
 else:
     print("no HALEU results found in", os.path.join(WORK_DIR, "results"))
+
+''')
+
+md(r'''## 11. Reflector thickness (R = 85 cm, H = 2R)
+Graphite reflector (same graphite as the core: 1.87 g/cc, `c_Graphite`, 922 K) of thickness **t on the side AND on top/bottom**
+(`build_model(..., reflector_thickness=t, reflector_axial=None)`; `reflector_axial` sets a different top/bottom thickness,
+default = radial). No vessel, downcomer or plena yet — vacuum outside the reflector. Default fuel/geometry: HALEU 19.75 wt%,
+4.0 mol% UF₄, case A (d = 1.0, flat 0.5, web 1.5, wall 0.5 cm, identical slots). Statistics as before (10 000 × 100, 40 inactive).
+
+* **Savings vs bare:** Δk = (k − k_bare)·10⁵ pcm and Δρ = (1/k_bare − 1/k)·10⁵ pcm; **marginal worth** = Δk/Δt between steps.
+* **Equivalent bare radius** R_eq(t): the bare-core radius with the same k-eff (monotone PCHIP interpolation of the §10 bare scan, case A).
+  R_eq − 85 cm is the "equivalent radius gain" at R = 85 cm; it is **not** the critical-radius reduction (reflector savings shrink with
+  the core size), so it overestimates the savings at criticality.
+* **Critical radius with t = 30 cm (direct search):** reflected runs at R = 45, 55, 65 cm plus one at the interpolated radius; Rc by
+  linear interpolation of k-eff between the two bracketing radii (σ from the k-eff errors).
+
+Run with `dev/reflector_scan.py scan` / `crit 30 R1 R2 …` and `dev/reflector_fit.py`; this cell loads `results/reflector_scan.csv`
+(set `RUN_REFLECTOR_SCAN = True` to recompute the thickness scan here, ~6 min).''')
+code(r'''
+RUN_REFLECTOR_SCAN = False
+REFL_R, REFL_T = 85.0, [0, 10, 20, 30, 45, 60]
+if RUN_REFLECTOR_SCAN and HAVE_XS:
+    rr = []
+    for t_ in REFL_T:
+        m_ = build_model(**DEFAULTS, **GEOM_OPTS, mode="cylinder", core_radius=REFL_R, reflector_thickness=t_, reflector_axial=t_,
+                         enrichment=ENRICHMENT, **RUN_OPTS)
+        k_, s_, L_ = _run_k(m_, os.path.join(WORK_DIR, "reflector", f"R{REFL_R:.1f}_t{float(t_):.1f}"))
+        rr.append(dict(kind="scan", core_radius=REFL_R, core_height=2 * REFL_R, reflector_radial=t_, reflector_axial=t_,
+                       keff=k_, keff_std=s_, leakage_fraction=L_))
+    pd.DataFrame(rr).to_csv(os.path.join(WORK_DIR, "results", "reflector_scan.csv"), index=False)
+
+# geometry check: xz slice of the reflected core (t = 30 cm)
+_mr = build_model(**DEFAULTS, **GEOM_OPTS, mode="cylinder", core_radius=REFL_R, reflector_thickness=30.0, enrichment=ENRICHMENT, **RUN_OPTS)
+_Wr = 2.1 * (REFL_R + 30.0)
+plot_slice(_mr, "xz", origin=(0, 0, 0), width=(_Wr, _Wr), pixels=(1000, 1000),
+           title=f"reflected core, xz slice (R = {REFL_R:.0f} cm, H = 2R, 30 cm graphite radially and axially)",
+           filename=os.path.join(WORK_DIR, "figures", "geom_reflected_xz.png"))
+plt.show()
+''')
+code(r'''
+"""Reflector-scan analysis + phone-friendly plot.
+Savings vs bare: dk = (k - k_bare) x 1e5 pcm and reactivity drho = (1/k_bare - 1/k) x 1e5 pcm; marginal worth = dk/dt between steps.
+Equivalent bare radius R_eq(t): radius of the BARE core (monotone PCHIP interpolation of the HALEU bare R scan, case A) with the
+same k-eff -> "equivalent radius gain" R_eq - 85 cm.  NOTE: this is NOT the critical-radius reduction (the savings shrink when
+the core shrinks); the reflected critical radius comes only from the direct search.
+Direct check: 'crit' runs at t = 30 cm, Rc by linear interpolation between the bracketing radii.
+Writes results/reflector_summary.csv and figures/reflector_scan.png."""
+import os
+import numpy as np, pandas as pd
+from scipy.interpolate import PchipInterpolator
+from scipy.optimize import brentq
+import matplotlib.pyplot as plt
+
+W = WORK_DIR
+if os.path.exists(os.path.join(W, "results", "reflector_scan.csv")):
+    df = pd.read_csv(os.path.join(W, "results", "reflector_scan.csv"))
+    sc = df[df.kind == "scan"].sort_values("reflector_radial").reset_index(drop=True)
+    k0 = sc.loc[sc.reflector_radial == 0, "keff"].iloc[0]; s0 = sc.loc[sc.reflector_radial == 0, "keff_std"].iloc[0]
+    sc["dk_pcm"] = (sc.keff - k0) * 1e5
+    sc["dk_pcm_std"] = np.hypot(sc.keff_std, s0) * 1e5
+    sc["drho_pcm"] = (1 / k0 - 1 / sc.keff) * 1e5
+    sc["marginal_pcm_per_cm"] = np.r_[np.nan, np.diff(sc.keff) / np.diff(sc.reflector_radial) * 1e5]
+    # equivalent bare radius from the bare HALEU scan (case A)
+    hs = pd.read_csv(os.path.join(W, "results", "haleu_R_scan.csv"))
+    b = hs[(hs.case == "A") & (hs.kind == "scan")].sort_values("core_radius")
+    kb = PchipInterpolator(b.core_radius.values, b.keff.values)
+    crit = pd.read_csv(os.path.join(W, "results", "haleu_critical.csv")).set_index("case")
+    Rc_bare, Rc_bare_std = crit.loc["A", "Rc"], crit.loc["A", "Rc_std"]
+    Rmin, Rmax = b.core_radius.min(), b.core_radius.max()
+    def r_eq(k):
+        return brentq(lambda R: kb(R) - k, Rmin, Rmax) if kb(Rmin) < k < kb(Rmax) else np.nan
+    sc["R_equiv_bare"] = [r_eq(k) for k in sc.keff]
+    sc["equiv_radius_gain_cm"] = sc.R_equiv_bare - sc.core_radius
+    # direct critical search (kind='crit')
+    cr = df[df.kind == "crit"].sort_values("core_radius")
+    direct = []
+    for t, g in cr.groupby("reflector_radial"):
+        g = pd.concat([g, sc[sc.reflector_radial == t]]).sort_values("core_radius")   # include the R=85 point
+        R_, k_, s_ = g.core_radius.values, g.keff.values, g.keff_std.values
+        i = np.searchsorted(k_, 1.0)
+        if 0 < i < len(k_):
+            slope = (k_[i] - k_[i - 1]) / (R_[i] - R_[i - 1])
+            Rc = R_[i - 1] + (1 - k_[i - 1]) / slope
+            w = (Rc - R_[i - 1]) / (R_[i] - R_[i - 1])
+            sk = np.hypot((1 - w) * s_[i - 1], w * s_[i])
+            fvf = g.fuel_salt_volume_m3.iloc[0] / (np.pi * R_[0] ** 2 * 2 * R_[0] / 1e6)          # fuel volume fraction
+            Vf = fvf * np.pi * Rc ** 2 * 2 * Rc / 1e6
+            rho_f = g.fuel_salt_mass_kg.iloc[0] / g.fuel_salt_volume_m3.iloc[0]
+            u5 = g.u235_mass_kg.iloc[0] / g.fuel_salt_volume_m3.iloc[0]
+            direct.append(dict(reflector=t, Rc_direct=Rc, Rc_direct_std=sk / slope, dkdR_pcm_per_cm=slope * 1e5,
+                               bracket=f"{R_[i - 1]:g}-{R_[i]:g}", savings_vs_bare_cm=Rc_bare - Rc, Rc_bare=Rc_bare, H_c=2 * Rc,
+                               outer_diameter=2 * (Rc + t), outer_height=2 * (Rc + t),
+                               core_volume_m3=np.pi * Rc ** 2 * 2 * Rc / 1e6, fuel_salt_volume_m3=Vf, fuel_salt_mass_kg=Vf * rho_f,
+                               u235_mass_kg=Vf * u5,
+                               reflector_graphite_m3=np.pi * ((Rc + t) ** 2 * 2 * (Rc + t) - Rc ** 2 * 2 * Rc) / 1e6))
+    direct = pd.DataFrame(direct)
+    sc.to_csv(os.path.join(W, "results", "reflector_summary.csv"), index=False)
+    if len(direct):
+        direct.to_csv(os.path.join(W, "results", "reflector_critical.csv"), index=False)
+
+    with plt.rc_context({"font.size": 13}):
+        fig, (a1, a2) = plt.subplots(2, 1, figsize=(6, 9.5), sharex=True, gridspec_kw=dict(height_ratios=[1.5, 1]))
+        a1.errorbar(sc.reflector_radial, sc.keff, yerr=sc.keff_std, fmt="o-", color="tab:blue", capsize=4, ms=7, lw=2)
+        for _, r in sc.iterrows():
+            if r.reflector_radial > 0:
+                a1.annotate(f"+{r.dk_pcm:.0f} pcm", (r.reflector_radial, r.keff), xytext=(0, -20), textcoords="offset points",
+                            ha="center", fontsize=10)
+        a1.axhline(1.0, color="k", lw=1)
+        a1.set_ylabel("k-eff (R = 85 cm, H = 2R)"); a1.grid(alpha=0.3)
+        a1.set_title("Graphite reflector scan (radial = axial = t)\nHALEU 19.75 %, 4 mol% UF4, case A geometry", fontsize=12)
+        a1.margins(y=0.15)
+        a2.plot(sc.reflector_radial, sc.leakage_fraction, "s-", color="tab:red", ms=6, lw=2, label="leakage fraction")
+        a2.set_ylabel("leakage fraction", color="tab:red"); a2.tick_params(axis="y", colors="tab:red"); a2.grid(alpha=0.3)
+        b2 = a2.twinx()
+        b2.plot(sc.reflector_radial, sc.marginal_pcm_per_cm, "D--", color="0.3", ms=6, lw=1.5)
+        b2.set_ylabel("marginal worth [pcm/cm]")
+        a2.set_xlabel("reflector thickness t [cm]"); a2.set_xticks(sc.reflector_radial)
+        if len(direct):
+            d0 = direct.iloc[0]
+            a1.text(0.02, 0.03, f"critical R with t = {d0.reflector:.0f} cm: {d0.Rc_direct:.1f} ± {d0.Rc_direct_std:.1f} cm\n"
+                                f"(bare: {Rc_bare:.1f} cm; savings {d0.savings_vs_bare_cm:.1f} cm)",
+                    transform=a1.transAxes, fontsize=10, va="bottom")
+        fig.tight_layout(); os.makedirs(os.path.join(W, "figures"), exist_ok=True)
+        fig.savefig(os.path.join(W, "figures", "reflector_scan.png"), dpi=150); plt.show()
+    display(sc[["reflector_radial", "keff", "keff_std", "leakage_fraction", "dk_pcm", "drho_pcm", "marginal_pcm_per_cm",
+              "R_equiv_bare", "equiv_radius_gain_cm"]].round(4))
+    display(direct.T) if len(direct) else print("no direct critical search yet")
+
+''')
+
+md(r'''## 12. Thin fuel slots with fixed width 1.0 cm — fuel/graphite optimum
+Thin fuel slots raise the stagnant-salt conduction power limit (∝ 1/d_f²). Here the **fuel slot total width is fixed at 1.0 cm**
+(`both_sides` profile, so `d_f ≤ 0.5` and `flat = 1.0 − 2 d_f`; d_f = 0.5 is a half-round) and the fuel depth is scanned,
+d_f = 0.20 … 0.50 cm. Coolant slots stay at the default (depth 1.0, flat 0.5 → 2.5 cm wide) via the new optional
+`coolant_depth=` / `coolant_flat_width=` parameters; web 1.5, wall 0.5 cm; HALEU 19.75 wt%, 4 mol% UF₄.
+The unit cell stays consistent: P_x = d_f + 1.0 + 2·0.5, P_y = 1.0 + web (fuel slots), P_z = 2.5 + web (coolant slots).
+
+For each depth: unit-cell k-inf, graphite-to-fuel volume ratio, bare R = 85 cm (H = 2R) k-eff; fuel salt and U-235 in the core
+(fuel fraction × core volume); relative conduction limit (1.0/d_f)² vs the 1.0 cm default. If k-inf peaks at an edge of the depth
+range, a unit-cell web-thickness scan at d_f = 0.5 (web 0.5 … 5 cm) locates the k-inf optimum in C/fuel ratio
+(note: a thicker web also lowers the coolant-salt fraction, which is a parasitic absorber).
+(`settings.source_rejection_fraction` is lowered to 0.001 because the fuel can be < 5 % of the volume.)
+
+Run with `dev/fuel_depth_w1_scan.py depth|web` and `dev/fuel_w1_fit.py`; this cell loads `results/fuel_depth_w1_scan.csv`
+(+ `results/fuel_w1_web_scan.csv`).''')
+code(r'''
+"""Analysis + phone-friendly plot for the fixed-width (1.0 cm) fuel-slot depth scan and the optional web scan.
+Optimum = maximum unit-cell k-inf; located with a parabola through the best point and its neighbours (if interior).
+Writes results/fuel_w1_summary.csv and figures/fuel_depth_w1_scan.png."""
+import os
+import numpy as np, pandas as pd
+import matplotlib.pyplot as plt
+
+W = WORK_DIR
+p_d, p_w = os.path.join(W, "results", "fuel_depth_w1_scan.csv"), os.path.join(W, "results", "fuel_w1_web_scan.csv")
+
+def optimum(x, k):
+    """argmax of k(x): parabola through the best point and its neighbours; flags edge maxima."""
+    x, k = np.asarray(x, float), np.asarray(k, float); i = int(np.argmax(k))
+    if i in (0, len(x) - 1):
+        return dict(x_opt=x[i], k_opt=k[i], at_edge=True)
+    c = np.polyfit(x[i - 1:i + 2], k[i - 1:i + 2], 2)
+    xo = -c[1] / (2 * c[0]) if c[0] < 0 else x[i]
+    return dict(x_opt=xo, k_opt=np.polyval(c, xo), at_edge=False)
+
+if os.path.exists(p_d):
+    fd = pd.read_csv(p_d).sort_values("fuel_depth").reset_index(drop=True)
+    wb = pd.read_csv(p_w).sort_values("web_thickness").reset_index(drop=True) if os.path.exists(p_w) else None
+    fd["critical_bare_R85"] = fd.keff_bare - 2 * fd.keff_bare_std >= 1.0
+    summ = [dict(scan="fuel depth (w_f = 1.0, web 1.5)", variable="fuel_depth", **optimum(fd.fuel_depth, fd.kinf))]
+    summ[0]["graphite_to_fuel_at_opt"] = float(np.interp(summ[0]["x_opt"], fd.fuel_depth, fd.graphite_to_fuel))
+    if wb is not None and len(wb) > 2:
+        o = optimum(wb.web_thickness, wb.kinf)
+        o["graphite_to_fuel_at_opt"] = float(np.interp(o["x_opt"], wb.web_thickness, wb.graphite_to_fuel))
+        summ.append(dict(scan="web (d_f = 0.5, w_f = 1.0)", variable="web_thickness", **o))
+    summ = pd.DataFrame(summ); summ.to_csv(os.path.join(W, "results", "fuel_w1_summary.csv"), index=False)
+
+    n = 4 if wb is not None else 3
+    with plt.rc_context({"font.size": 13}):
+        fig, axs = plt.subplots(n, 1, figsize=(6, 3.4 * n + 0.8))
+        a1, a2, a3 = axs[:3]
+        a1.errorbar(fd.fuel_depth, fd.kinf, yerr=fd.kinf_std, fmt="o-", color="tab:purple", capsize=4, ms=7, lw=2)
+        a1.set_ylabel("unit-cell k-inf"); a1.grid(alpha=0.3)
+        b1 = a1.twinx(); b1.plot(fd.fuel_depth, fd.graphite_to_fuel, "D--", color="0.4", ms=5, lw=1.2)
+        b1.set_ylabel("C / fuel (vol)", color="0.4")
+        a1.set_title("Fuel slots 1.0 cm wide (flat = 1 − 2 d_f), coolant 1.0 × 2.5 cm\nHALEU 19.75 %, 4 mol% UF4, web 1.5, wall 0.5 cm", fontsize=12)
+        a2.errorbar(fd.fuel_depth, fd.keff_bare, yerr=fd.keff_bare_std, fmt="s-", color="tab:blue", capsize=4, ms=7, lw=2)
+        a2.axhline(1.0, color="k", lw=1); a2.set_ylabel("bare k-eff\nR = 85 cm, H = 2R"); a2.grid(alpha=0.3)
+        for x_, k_, L_ in zip(fd.fuel_depth, fd.keff_bare, fd.leakage_bare):
+            a2.annotate(f"{L_:.2f}", (x_, k_), xytext=(0, 8), textcoords="offset points", ha="center", fontsize=9)
+        a2.text(0.02, 0.9, "labels = leakage fraction", transform=a2.transAxes, fontsize=9)
+        a3.plot(fd.fuel_depth, fd.u235_mass_kg, "o-", color="0.3", ms=6, lw=2); a3.set_ylabel("U-235 in core [kg]"); a3.grid(alpha=0.3)
+        b3 = a3.twinx(); b3.plot(fd.fuel_depth, fd.rel_conduction_power_limit, "^--", color="tab:orange", ms=6, lw=1.5)
+        b3.set_ylabel("rel. conduction limit\n(1.0/d_f)²", color="tab:orange"); b3.tick_params(axis="y", colors="tab:orange")
+        for a in (a1, a2, a3):
+            a.set_xticks(fd.fuel_depth); a.set_xlabel("fuel slot depth d_f [cm]", fontsize=11)
+        if wb is not None:
+            a4 = axs[3]
+            a4.errorbar(fd.graphite_to_fuel, fd.kinf, yerr=fd.kinf_std, fmt="o-", color="tab:purple", capsize=3, ms=6, label="depth scan (web 1.5)")
+            a4.errorbar(wb.graphite_to_fuel, wb.kinf, yerr=wb.kinf_std, fmt="s-", color="tab:green", capsize=3, ms=6, label="web scan (d_f 0.5)")
+            for x_, k_, t_ in zip(wb.graphite_to_fuel, wb.kinf, wb.web_thickness):
+                a4.annotate(f"web {t_:g}", (x_, k_), xytext=(4, -12), textcoords="offset points", fontsize=8, color="tab:green")
+            a4.set_xlabel("graphite / fuel volume ratio"); a4.set_ylabel("unit-cell k-inf"); a4.grid(alpha=0.3); a4.legend(fontsize=9)
+        fig.tight_layout(); os.makedirs(os.path.join(W, "figures"), exist_ok=True)
+        fig.savefig(os.path.join(W, "figures", "fuel_depth_w1_scan.png"), dpi=150); plt.show()
+    display(fd[["fuel_depth", "fuel_flat", "kinf", "kinf_std", "graphite_to_fuel", "fuel_vf", "coolant_vf", "keff_bare", "keff_bare_std",
+              "leakage_bare", "critical_bare_R85", "fuel_salt_volume_m3", "fuel_salt_mass_kg", "u235_mass_kg", "rel_conduction_power_limit"]].round(4))
+    if wb is not None:
+        display(wb[["web_thickness", "pitch_y", "pitch_z", "kinf", "kinf_std", "graphite_to_fuel", "fuel_vf", "coolant_vf"]].round(4))
+    display(summ.round(4))
+else:
+    print("no fixed-width fuel-depth results in", os.path.join(WORK_DIR, "results"))
 
 ''')
 
